@@ -35,6 +35,8 @@ public:
         unsigned int texture = 0;
         State state = State::Available;
         std::uint64_t serial = 0;
+        int contentWidth = 0;
+        int contentHeight = 0;
     };
 
     static constexpr std::size_t BufferCount = 3;
@@ -44,9 +46,10 @@ public:
     std::array<Slot, BufferCount> buffers;
     int width = 0;
     int height = 0;
+    int capacityWidth = 0;
+    int capacityHeight = 0;
     std::uint64_t nextSerial = 0;
     std::uint64_t generation = 0;
-    bool rebuilding = false;
 };
 
 class MpvRenderThread final : public QThread {
@@ -284,10 +287,6 @@ void MpvVideoSurface::paintGL()
     std::uint64_t generation = 0;
     {
         const std::scoped_lock lock(m_framePool->mutex);
-        if (m_framePool->rebuilding) {
-            return;
-        }
-
         std::uint64_t newestSerial = 0;
         for (std::size_t index = 0;
              index < SharedFramePool::BufferCount; ++index) {
@@ -324,8 +323,8 @@ void MpvVideoSurface::paintGL()
         auto &selected = m_framePool->buffers[selectedIndex];
         selected.state = SharedFramePool::State::Displaying;
         texture = selected.texture;
-        sourceWidth = m_framePool->width;
-        sourceHeight = m_framePool->height;
+        sourceWidth = selected.contentWidth;
+        sourceHeight = selected.contentHeight;
         generation = m_framePool->generation;
     }
 
@@ -485,7 +484,6 @@ void MpvVideoSurface::destroyRenderContextOnWorker()
         QOpenGLContext::currentContext()->functions();
     {
         const std::scoped_lock lock(m_framePool->mutex);
-        m_framePool->rebuilding = true;
         for (auto &slot : m_framePool->buffers) {
             if (slot.framebuffer != 0) {
                 functions->glDeleteFramebuffers(
@@ -498,8 +496,9 @@ void MpvVideoSurface::destroyRenderContextOnWorker()
         }
         m_framePool->width = 0;
         m_framePool->height = 0;
+        m_framePool->capacityWidth = 0;
+        m_framePool->capacityHeight = 0;
         ++m_framePool->generation;
-        m_framePool->rebuilding = false;
     }
     m_framePool->condition.notify_all();
     m_renderContextReady.store(false, std::memory_order_release);
@@ -512,40 +511,39 @@ void MpvVideoSurface::ensureWorkerFramebuffer(const QSize &pixelSize)
         qMax(1, pixelSize.height()));
     {
         const std::scoped_lock lock(m_framePool->mutex);
-        if (m_framePool->width == safeSize.width()
-            && m_framePool->height == safeSize.height()
+        if (m_framePool->capacityWidth >= safeSize.width()
+            && m_framePool->capacityHeight >= safeSize.height()
             && m_framePool->buffers.front().texture != 0) {
+            m_framePool->width = safeSize.width();
+            m_framePool->height = safeSize.height();
             return;
         }
     }
 
-    QOpenGLFunctions *functions =
-        QOpenGLContext::currentContext()->functions();
-    std::unique_lock poolLock(m_framePool->mutex);
-    m_framePool->rebuilding = true;
-    m_framePool->condition.wait(
-        poolLock, [this] {
-            for (const auto &slot : m_framePool->buffers) {
-                if (slot.state == SharedFramePool::State::Displaying) {
-                    return false;
-                }
-            }
-            return true;
-        });
-
-    for (auto &slot : m_framePool->buffers) {
-        if (slot.framebuffer != 0) {
-            functions->glDeleteFramebuffers(
-                1, &slot.framebuffer);
-        }
-        if (slot.texture != 0) {
-            functions->glDeleteTextures(1, &slot.texture);
-        }
-        slot = {};
+    int previousCapacityWidth = 0;
+    int previousCapacityHeight = 0;
+    {
+        const std::scoped_lock lock(m_framePool->mutex);
+        previousCapacityWidth = m_framePool->capacityWidth;
+        previousCapacityHeight = m_framePool->capacityHeight;
     }
+    const int newCapacityWidth = qMax(
+        safeSize.width(),
+        qMax(1, previousCapacityWidth
+                    + previousCapacityWidth / 2));
+    const int newCapacityHeight = qMax(
+        safeSize.height(),
+        qMax(1, previousCapacityHeight
+                    + previousCapacityHeight / 2));
 
+    QOpenGLContext *currentContext = QOpenGLContext::currentContext();
+    QOpenGLFunctions *functions = currentContext->functions();
+    QOpenGLExtraFunctions *extraFunctions =
+        currentContext->extraFunctions();
+    std::array<SharedFramePool::Slot, SharedFramePool::BufferCount>
+        replacementBuffers;
     bool complete = true;
-    for (auto &slot : m_framePool->buffers) {
+    for (auto &slot : replacementBuffers) {
         functions->glGenTextures(1, &slot.texture);
         functions->glBindTexture(GL_TEXTURE_2D, slot.texture);
         functions->glTexParameteri(
@@ -558,7 +556,7 @@ void MpvVideoSurface::ensureWorkerFramebuffer(const QSize &pixelSize)
             GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         functions->glTexImage2D(
             GL_TEXTURE_2D, 0, GL_RGBA8,
-            safeSize.width(), safeSize.height(), 0,
+            newCapacityWidth, newCapacityHeight, 0,
             GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
 
         functions->glGenFramebuffers(1, &slot.framebuffer);
@@ -578,18 +576,97 @@ void MpvVideoSurface::ensureWorkerFramebuffer(const QSize &pixelSize)
 
     functions->glBindFramebuffer(GL_FRAMEBUFFER, 0);
     functions->glFinish();
-    m_framePool->width = complete ? safeSize.width() : 0;
-    m_framePool->height = complete ? safeSize.height() : 0;
-    ++m_framePool->generation;
-    m_framePool->rebuilding = false;
-    poolLock.unlock();
-    m_framePool->condition.notify_all();
 
     if (!complete) {
+        for (auto &slot : replacementBuffers) {
+            if (slot.framebuffer != 0) {
+                functions->glDeleteFramebuffers(
+                    1, &slot.framebuffer);
+            }
+            if (slot.texture != 0) {
+                functions->glDeleteTextures(1, &slot.texture);
+            }
+        }
         Logger::error(
             QStringLiteral(
                 "Background video framebuffer pool is incomplete"));
+        return;
     }
+
+    // Build larger storage without disturbing the frame being presented.
+    // Once it is ready, briefly exclude the GUI blit, scale the most recent
+    // completed frame into the replacement pool, and atomically publish it.
+    // This mirrors IINA's live-resize rule: retain old video content until a
+    // valid draw at the new size is available instead of exposing black.
+    std::unique_lock poolLock(m_framePool->mutex);
+    m_framePool->condition.wait(
+        poolLock, [this] {
+            for (const auto &slot : m_framePool->buffers) {
+                if (slot.state == SharedFramePool::State::Displaying) {
+                    return false;
+                }
+            }
+            return true;
+        });
+
+    std::size_t sourceIndex = SharedFramePool::BufferCount;
+    std::uint64_t newestSerial = 0;
+    for (std::size_t index = 0;
+         index < SharedFramePool::BufferCount; ++index) {
+        const auto &slot = m_framePool->buffers[index];
+        if ((slot.state == SharedFramePool::State::Ready
+             || slot.state == SharedFramePool::State::Presented)
+            && slot.texture != 0
+            && slot.contentWidth > 0
+            && slot.contentHeight > 0
+            && (sourceIndex == SharedFramePool::BufferCount
+                || slot.serial > newestSerial)) {
+            sourceIndex = index;
+            newestSerial = slot.serial;
+        }
+    }
+
+    if (sourceIndex != SharedFramePool::BufferCount) {
+        const auto &source = m_framePool->buffers[sourceIndex];
+        extraFunctions->glBindFramebuffer(
+            GL_READ_FRAMEBUFFER, source.framebuffer);
+        extraFunctions->glBindFramebuffer(
+            GL_DRAW_FRAMEBUFFER,
+            replacementBuffers.front().framebuffer);
+        extraFunctions->glBlitFramebuffer(
+            0, 0, source.contentWidth, source.contentHeight,
+            0, 0, safeSize.width(), safeSize.height(),
+            GL_COLOR_BUFFER_BIT, GL_LINEAR);
+        extraFunctions->glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        extraFunctions->glFinish();
+
+        replacementBuffers.front().state =
+            SharedFramePool::State::Presented;
+        replacementBuffers.front().serial =
+            ++m_framePool->nextSerial;
+        replacementBuffers.front().contentWidth =
+            safeSize.width();
+        replacementBuffers.front().contentHeight =
+            safeSize.height();
+    }
+
+    for (auto &slot : m_framePool->buffers) {
+        if (slot.framebuffer != 0) {
+            functions->glDeleteFramebuffers(
+                1, &slot.framebuffer);
+        }
+        if (slot.texture != 0) {
+            functions->glDeleteTextures(1, &slot.texture);
+        }
+    }
+    m_framePool->buffers = replacementBuffers;
+    m_framePool->width = safeSize.width();
+    m_framePool->height = safeSize.height();
+    m_framePool->capacityWidth = newCapacityWidth;
+    m_framePool->capacityHeight = newCapacityHeight;
+    ++m_framePool->generation;
+    poolLock.unlock();
+    m_framePool->condition.notify_all();
 }
 
 void MpvVideoSurface::renderFrameOnWorker(const QSize &pixelSize)
@@ -676,6 +753,8 @@ void MpvVideoSurface::renderFrameOnWorker(const QSize &pixelSize)
         }
         auto &selected = m_framePool->buffers[selectedIndex];
         selected.serial = ++m_framePool->nextSerial;
+        selected.contentWidth = targetWidth;
+        selected.contentHeight = targetHeight;
         selected.state = SharedFramePool::State::Ready;
     }
 
