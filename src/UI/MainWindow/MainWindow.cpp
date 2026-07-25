@@ -1,36 +1,60 @@
 #include "UI/MainWindow/MainWindow.h"
 
-#include "Core/Logger.h"
-#include "Mpv/MpvCore.h"
+#include "App/MediaSourceResolver.h"
 #include "Mpv/MpvVideoSurface.h"
+#include "PlayerCore/PlayerCore.h"
 
+#include <QAction>
 #include <QCloseEvent>
+#include <QDir>
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QIcon>
 #include <QKeyEvent>
+#include <QKeySequence>
+#include <QMenu>
+#include <QMenuBar>
+#include <QMessageBox>
+#include <QMimeData>
 
-#include <utility>
+#include <stdexcept>
 
-MainWindow::MainWindow(QWidget *parent)
+MainWindow::MainWindow(PlayerCore *playerCore, QWidget *parent)
     : QMainWindow(parent),
-      m_mpvCore(std::make_unique<MpvCore>())
+      m_playerCore(playerCore)
 {
+    if (!m_playerCore) {
+        throw std::invalid_argument("MainWindow requires a PlayerCore");
+    }
     setupWindowChrome();
+    setupMenus();
 
-    connect(m_mpvCore.get(), &MpvCore::mpvLogMessage, this,
-            [](const QString &prefix, const QString &level,
-               const QString &text) {
-                const QString message =
-                    QStringLiteral("mpv[%1/%2] %3")
-                        .arg(prefix, level, text.trimmed());
-                if (level == QStringLiteral("fatal")
-                    || level == QStringLiteral("error")) {
-                    Logger::error(message);
-                } else {
-                    Logger::warn(message);
+    connect(m_playerCore, &PlayerCore::stateChanged, this,
+            [this](PlayerState state) {
+                if (!m_closePending) {
+                    return;
+                }
+                if (state == PlayerState::Idle) {
+                    beginShutdown();
+                } else if (state == PlayerState::ShutDown) {
+                    close();
                 }
             });
-    connect(m_mpvCore.get(), &MpvCore::mpvShutdown,
-            this, &QWidget::close);
+    connect(
+        m_playerCore, &PlayerCore::currentUrlChanged,
+        this, [this](const QUrl &url) {
+            QString mediaName = url.fileName();
+            if (mediaName.isEmpty()) {
+                mediaName = url.host();
+            }
+            if (mediaName.isEmpty()) {
+                mediaName = url.toDisplayString();
+            }
+            setWindowTitle(
+                tr("%1 — Supernova").arg(mediaName));
+        });
 }
 
 MainWindow::~MainWindow()
@@ -39,41 +63,70 @@ MainWindow::~MainWindow()
         delete surface;
     }
     m_videoSurface = nullptr;
-    m_mpvCore.reset();
 }
 
-void MainWindow::openMedia(const QString &path)
+bool MainWindow::isRenderContextReady() const noexcept
 {
-    if (path.isEmpty()) {
-        return;
-    }
-    m_pendingMediaPath = path;
-    loadPendingMedia();
+    return m_videoSurface && m_videoSurface->isRenderContextReady();
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
-    QMainWindow::closeEvent(event);
+    if (m_playerCore->info().state == PlayerState::ShutDown) {
+        event->accept();
+        return;
+    }
+
+    event->ignore();
+    if (m_closePending) {
+        return;
+    }
+    m_closePending = true;
+
+    if (m_playerCore->info().state == PlayerState::Idle) {
+        beginShutdown();
+    } else {
+        m_playerCore->stop();
+    }
+}
+
+void MainWindow::dragEnterEvent(QDragEnterEvent *event)
+{
+    if (MediaSourceResolver::canResolve(event->mimeData())) {
+        event->setDropAction(Qt::CopyAction);
+        event->accept();
+        return;
+    }
+    event->ignore();
+}
+
+void MainWindow::dropEvent(QDropEvent *event)
+{
+    const QList<QUrl> urls =
+        MediaSourceResolver::fromMimeData(event->mimeData());
+    if (urls.isEmpty()) {
+        event->ignore();
+        return;
+    }
+
+    requestOpen(urls);
+    event->setDropAction(Qt::CopyAction);
+    event->accept();
 }
 
 void MainWindow::keyPressEvent(QKeyEvent *event)
 {
     switch (event->key()) {
     case Qt::Key_Space:
-        m_mpvCore->command(
-            {QStringLiteral("cycle"), QStringLiteral("pause")});
+        m_playerCore->togglePause();
         event->accept();
         return;
     case Qt::Key_Left:
-        m_mpvCore->command(
-            {QStringLiteral("seek"), QStringLiteral("-5"),
-             QStringLiteral("relative+exact")});
+        m_playerCore->seekRelative(-5.0, true);
         event->accept();
         return;
     case Qt::Key_Right:
-        m_mpvCore->command(
-            {QStringLiteral("seek"), QStringLiteral("5"),
-             QStringLiteral("relative+exact")});
+        m_playerCore->seekRelative(5.0, true);
         event->accept();
         return;
     default:
@@ -87,23 +140,104 @@ void MainWindow::setupWindowChrome()
     setWindowTitle(QStringLiteral("Supernova"));
     setWindowIcon(QIcon(QStringLiteral(":/icons/supernova.ico")));
     setMinimumSize(480, 270);
+    setAcceptDrops(true);
 
-    m_videoSurface = new MpvVideoSurface(m_mpvCore.get(), this);
+    m_videoSurface =
+        new MpvVideoSurface(m_playerCore->mpvCore(), this);
+    m_videoSurface->setAcceptDrops(false);
     connect(m_videoSurface, &MpvVideoSurface::renderContextReady,
-            this, &MainWindow::loadPendingMedia);
+            this, &MainWindow::renderContextReady);
     setCentralWidget(m_videoSurface);
 }
 
-void MainWindow::loadPendingMedia()
+void MainWindow::setupMenus()
 {
-    if (m_pendingMediaPath.isEmpty()
-        || !m_videoSurface
-        || !m_videoSurface->isRenderContextReady()) {
+    QMenu *fileMenu = menuBar()->addMenu(tr("&File"));
+
+    QAction *openFilesAction =
+        fileMenu->addAction(tr("&Open File…"));
+    openFilesAction->setShortcuts(QKeySequence::Open);
+    openFilesAction->setStatusTip(
+        tr("Open one or more media files"));
+    connect(openFilesAction, &QAction::triggered,
+            this, &MainWindow::openFiles);
+
+    QAction *openFolderAction =
+        fileMenu->addAction(tr("Open &Folder…"));
+    openFolderAction->setShortcut(
+        QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
+    openFolderAction->setStatusTip(
+        tr("Open all supported media in a folder"));
+    connect(openFolderAction, &QAction::triggered,
+            this, &MainWindow::openFolder);
+
+    fileMenu->addSeparator();
+    QAction *exitAction = fileMenu->addAction(tr("E&xit"));
+    exitAction->setShortcut(QKeySequence::Quit);
+    connect(exitAction, &QAction::triggered, this, &QWidget::close);
+}
+
+void MainWindow::openFiles()
+{
+    const QString initialDirectory =
+        m_lastOpenDirectory.isEmpty()
+            ? QDir::homePath()
+            : m_lastOpenDirectory;
+    const QStringList paths = QFileDialog::getOpenFileNames(
+        this,
+        tr("Choose Media Files"),
+        initialDirectory,
+        MediaSourceResolver::mediaDialogFilter());
+    if (paths.isEmpty()) {
         return;
     }
 
-    const QString path = std::exchange(m_pendingMediaPath, {});
-    m_mpvCore->command(
-        {QStringLiteral("loadfile"), path, QStringLiteral("replace")});
-    Logger::info(QStringLiteral("Loading media: %1").arg(path));
+    m_lastOpenDirectory = QFileInfo(paths.constFirst()).absolutePath();
+    requestOpen(
+        MediaSourceResolver::fromUserInputs(paths));
+}
+
+void MainWindow::openFolder()
+{
+    const QString initialDirectory =
+        m_lastOpenDirectory.isEmpty()
+            ? QDir::homePath()
+            : m_lastOpenDirectory;
+    const QString path = QFileDialog::getExistingDirectory(
+        this,
+        tr("Choose Media Folder"),
+        initialDirectory,
+        QFileDialog::ShowDirsOnly);
+    if (path.isEmpty()) {
+        return;
+    }
+
+    m_lastOpenDirectory = path;
+    requestOpen(
+        MediaSourceResolver::resolve(
+            {QUrl::fromLocalFile(path)}));
+}
+
+void MainWindow::requestOpen(const QList<QUrl> &urls)
+{
+    if (urls.isEmpty()) {
+        QMessageBox::information(
+            this,
+            tr("Nothing to Open"),
+            tr("The selection does not contain playable media."));
+        return;
+    }
+    emit openUrlsRequested(urls);
+}
+
+void MainWindow::beginShutdown()
+{
+    // libmpv requires every render context to be freed before its core is
+    // destroyed. The quit command is asynchronous, so tear down the surface
+    // before starting that handshake.
+    if (QWidget *surface = takeCentralWidget()) {
+        delete surface;
+    }
+    m_videoSurface = nullptr;
+    m_playerCore->shutdown();
 }

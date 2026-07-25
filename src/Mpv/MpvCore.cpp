@@ -76,6 +76,8 @@ MpvCore::MpvCore(QObject *parent)
         observe(QStringLiteral("track-list"), MPV_FORMAT_NONE);
         observe(QStringLiteral("chapter"), MPV_FORMAT_INT64);
         observe(QStringLiteral("speed"), MPV_FORMAT_DOUBLE);
+        observe(QStringLiteral("idle-active"), MPV_FORMAT_FLAG);
+        observe(QStringLiteral("eof-reached"), MPV_FORMAT_FLAG);
 
         mpv_set_wakeup_callback(m_mpv, &MpvCore::wakeupTrampoline, this);
         requireInitializationStep(mpv_initialize(m_mpv),
@@ -278,6 +280,17 @@ void MpvCore::handleEvent(mpv_event *event)
         }
         break;
     }
+    case MPV_EVENT_START_FILE:
+        // mpv_event_start_file contains a playlist entry ID, not a path.
+        // The path property is already updated when this event is delivered.
+        emit fileStarted(getString(QStringLiteral("path")));
+        break;
+    case MPV_EVENT_FILE_LOADED:
+        emit fileLoaded();
+        break;
+    case MPV_EVENT_VIDEO_RECONFIG:
+        emit videoReconfig();
+        break;
     case MPV_EVENT_SHUTDOWN:
         emit mpvShutdown();
         break;

@@ -1,17 +1,30 @@
 #include "App/Application.h"
 #include "App/CommandLineArgs.h"
+#include "App/MediaSourceResolver.h"
 #include "App/SingleInstanceGuard.h"
 #include "Core/Logger.h"
+#include "PlayerCore/PlayerCore.h"
 #include "UI/MainWindow/MainWindow.h"
 
-#include <QObject>
 #include <QCoreApplication>
+#include <QList>
+#include <QObject>
+#include <QUrl>
 
 #include <exception>
+#include <utility>
+
+namespace {
+QList<QUrl> mediaUrls(const QStringList &paths)
+{
+    return MediaSourceResolver::fromUserInputs(paths);
+}
+}
 
 int main(int argc, char *argv[])
 {
     QCoreApplication::setAttribute(Qt::AA_UseDesktopOpenGL);
+    QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
 
     Application app(argc, argv);
     app.setApplicationName(QStringLiteral("Supernova"));
@@ -36,12 +49,41 @@ int main(int argc, char *argv[])
                           QStringLiteral(SUPERNOVA_CHANNEL)));
 
     try {
-        MainWindow window;
+        PlayerCore playerCore;
+        MainWindow window(&playerCore);
+        QList<QUrl> pendingUrls;
+
+        const auto openWhenRendererReady =
+            [&window, &playerCore, &pendingUrls](const QList<QUrl> &urls) {
+                if (urls.isEmpty()) {
+                    return;
+                }
+                if (window.isRenderContextReady()) {
+                    playerCore.openUrls(urls);
+                } else {
+                    pendingUrls = urls;
+                }
+            };
+
+        QObject::connect(
+            &window, &MainWindow::renderContextReady,
+            &playerCore, [&playerCore, &pendingUrls] {
+                if (pendingUrls.isEmpty()) {
+                    return;
+                }
+                playerCore.openUrls(std::exchange(pendingUrls, {}));
+            });
+
+        QObject::connect(
+            &window, &MainWindow::openUrlsRequested,
+            &playerCore, openWhenRendererReady);
+
         QObject::connect(
             &guard,
             &SingleInstanceGuard::argumentsReceivedFromNewInstance,
             &window,
-            [&window](const QStringList &arguments) {
+            [&window, &openWhenRendererReady](
+                const QStringList &arguments) {
                 window.show();
                 window.raise();
                 window.activateWindow();
@@ -54,13 +96,12 @@ int main(int argc, char *argv[])
                 forwardedArguments.append(arguments);
                 const CommandLineArgs parsedForwarded =
                     CommandLineArgs::parse(forwardedArguments);
-                if (!parsedForwarded.mediaPaths.isEmpty()) {
-                    window.openMedia(parsedForwarded.mediaPaths.constFirst());
-                }
+                openWhenRendererReady(
+                    mediaUrls(parsedForwarded.mediaPaths));
             });
 
         if (!parsedArguments.mediaPaths.isEmpty()) {
-            window.openMedia(parsedArguments.mediaPaths.constFirst());
+            openWhenRendererReady(mediaUrls(parsedArguments.mediaPaths));
         }
 
         window.resize(1280, 720);

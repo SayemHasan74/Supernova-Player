@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 include(GNUInstallDirs)
+include(CTest)
 
 set(SUPERNOVA_CHANNEL "Dev" CACHE STRING "Build channel: Dev, Beta, Nightly, Release")
 set_property(CACHE SUPERNOVA_CHANNEL PROPERTY STRINGS Dev Beta Nightly Release)
@@ -24,12 +25,18 @@ qt_add_executable(Supernova WIN32
     src/App/SingleInstanceGuard.cpp
     src/App/CommandLineArgs.h
     src/App/CommandLineArgs.cpp
+    src/App/MediaSourceResolver.h
+    src/App/MediaSourceResolver.cpp
     src/Core/Logger.h
     src/Core/Logger.cpp
     src/Mpv/MpvCore.h
     src/Mpv/MpvCore.cpp
     src/Mpv/MpvVideoSurface.h
     src/Mpv/MpvVideoSurface.cpp
+    src/PlayerCore/PlayerState.h
+    src/PlayerCore/PlaybackInfo.h
+    src/PlayerCore/PlayerCore.h
+    src/PlayerCore/PlayerCore.cpp
     src/UI/MainWindow/MainWindow.h
     src/UI/MainWindow/MainWindow.cpp
     resources/app.rc
@@ -82,3 +89,39 @@ add_custom_command(TARGET Supernova POST_BUILD
         "$<TARGET_FILE_DIR:Supernova>"
     VERBATIM
 )
+
+if(WIN32)
+    # Keep the development build self-contained and directly runnable. This
+    # is the Windows equivalent of IINA's build phase that copies its runtime
+    # dylibs into the application bundle.
+    add_custom_command(TARGET Supernova POST_BUILD
+        COMMAND "$<TARGET_FILE:Qt6::windeployqt>"
+            --dir "$<TARGET_FILE_DIR:Supernova>"
+            --no-translations
+            --no-compiler-runtime
+            "$<TARGET_FILE:Supernova>"
+        COMMENT "Deploying Qt runtime beside Supernova"
+        VERBATIM
+    )
+endif()
+
+if(BUILD_TESTING)
+    qt_add_executable(SupernovaMediaSourceResolverTests
+        tests/MediaSourceResolverTests.cpp
+        src/App/MediaSourceResolver.h
+        src/App/MediaSourceResolver.cpp
+    )
+    target_include_directories(
+        SupernovaMediaSourceResolverTests PRIVATE src)
+    target_link_libraries(
+        SupernovaMediaSourceResolverTests PRIVATE Qt6::Core)
+    add_test(
+        NAME MediaSourceResolver
+        COMMAND SupernovaMediaSourceResolverTests)
+    if(WIN32)
+        set_tests_properties(
+            MediaSourceResolver PROPERTIES
+            ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+    endif()
+endif()

@@ -32,6 +32,9 @@ signals:
     void propertyChanged(const QString &name, const QVariant &value);
     void mpvLogMessage(const QString &prefix, const QString &level,
                        const QString &text);
+    void fileStarted(const QString &path);
+    void fileLoaded();
+    void videoReconfig();
     void mpvShutdown();
 
 private slots:
