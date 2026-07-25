@@ -60,8 +60,8 @@ cmake --install build/release --prefix "$PWD/build/install"
 
 - Windowed and fullscreen playback use one window and one persistent widget
   tree.
-- The libmpv OpenGL render API is hosted by `QOpenGLWidget` on Qt's GUI thread,
-  matching Qt's context ownership model and mpv's official Qt example.
+- The libmpv OpenGL render API runs on a shared worker context and presents
+  through a persistent `QOpenGLWidget` using asynchronous GPU fences.
 - Playback controls and sidebars will overlay the video surface without
   becoming layout siblings.
 - Drag and fade interactions use Qt's animation/compositor facilities.
@@ -81,6 +81,12 @@ cmake --install build/release --prefix "$PWD/build/install"
 - Press <kbd>Space</kbd> to pause or resume.
 - Press <kbd>Left</kbd> or <kbd>Right</kbd> to seek backward or forward five
   seconds.
+- Double-click the video, press <kbd>F</kbd>, <kbd>F11</kbd>, or
+  <kbd>Alt</kbd>+<kbd>Enter</kbd> to toggle true fullscreen. The same window,
+  video surface, actions, and future overlay controls remain active in both
+  modes.
+- Press <kbd>Escape</kbd> in either mode to pause and minimize. Restoring the
+  window returns it to the mode it was in before minimizing.
 
 ## Licensing
 
