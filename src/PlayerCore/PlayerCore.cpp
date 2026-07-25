@@ -395,7 +395,14 @@ void PlayerCore::onMpvFileEnded(const MpvEndFileInfo &info)
         Logger::warn(m_pendingPlaybackError);
     } else if (info.reason == MPV_END_FILE_REASON_STOP
                && m_info.state != PlayerState::Stopping) {
-        setState(PlayerState::Idle);
+        // loadfile replace ends the previous playlist entry with STOP before
+        // starting the replacement. openPrimaryUrl has already moved us to
+        // Loading, so treating that expected event as an explicit stop would
+        // make the following START_FILE/FILE_LOADED events look stale and
+        // leave the new media black.
+        if (m_info.state != PlayerState::Loading) {
+            setState(PlayerState::Idle);
+        }
     }
 }
 
