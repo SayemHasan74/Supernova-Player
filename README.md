@@ -87,6 +87,10 @@ cmake --install build/release --prefix "$PWD/build/install"
   modes.
 - Press <kbd>Escape</kbd> in either mode to pause and minimize. Restoring the
   window returns it to the mode it was in before minimizing.
+- Middle-click the video to collapse the player into an always-on-top progress
+  line while playback continues. Middle-click the line to restore the exact
+  previous windowed, maximized, or fullscreen state. Left-click the line to
+  seek.
 
 ## Licensing
 

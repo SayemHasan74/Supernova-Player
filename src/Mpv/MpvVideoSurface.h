@@ -27,6 +27,7 @@ public:
     {
         return m_renderContextReady.load(std::memory_order_acquire);
     }
+    void setLiveResize(bool active);
 
 signals:
     void renderContextReady();

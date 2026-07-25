@@ -62,6 +62,7 @@ public:
         const QSize &initialPixelSize)
         : m_videoSurface(videoSurface),
           m_targetPixelSize(initialPixelSize),
+          m_latestPixelSize(initialPixelSize),
           m_context(std::make_unique<QOpenGLContext>()),
           m_surface(std::make_unique<QOffscreenSurface>())
     {
@@ -99,8 +100,26 @@ public:
     {
         {
             const std::scoped_lock lock(m_requestMutex);
-            m_targetPixelSize = pixelSize;
-            m_resizePending = true;
+            m_latestPixelSize = pixelSize;
+            if (!m_liveResize) {
+                m_targetPixelSize = pixelSize;
+                m_resizePending = true;
+            }
+            m_framePending = true;
+        }
+        m_requestCondition.notify_one();
+    }
+
+    void setLiveResize(bool active, const QSize &pixelSize)
+    {
+        {
+            const std::scoped_lock lock(m_requestMutex);
+            m_liveResize = active;
+            m_latestPixelSize = pixelSize;
+            if (!active) {
+                m_targetPixelSize = m_latestPixelSize;
+                m_resizePending = true;
+            }
             m_framePending = true;
         }
         m_requestCondition.notify_one();
@@ -201,6 +220,7 @@ private:
 
     MpvVideoSurface *m_videoSurface = nullptr;
     QSize m_targetPixelSize;
+    QSize m_latestPixelSize;
     std::unique_ptr<QOpenGLContext> m_context;
     std::unique_ptr<QOffscreenSurface> m_surface;
     std::mutex m_requestMutex;
@@ -209,6 +229,7 @@ private:
     bool m_resizePending = true;
     bool m_swapReportPending = false;
     bool m_stopRequested = false;
+    bool m_liveResize = false;
 };
 
 MpvVideoSurface::MpvVideoSurface(MpvCore *core, QWidget *parent)
@@ -228,6 +249,21 @@ MpvVideoSurface::MpvVideoSurface(MpvCore *core, QWidget *parent)
 MpvVideoSurface::~MpvVideoSurface()
 {
     cleanupRenderContext();
+}
+
+void MpvVideoSurface::setLiveResize(bool active)
+{
+    if (!m_renderThread
+        || m_cleanupInProgress.load(std::memory_order_acquire)) {
+        return;
+    }
+
+    const qreal scale = devicePixelRatioF();
+    const QSize pixelSize(
+        qMax(1, qRound(width() * scale)),
+        qMax(1, qRound(height() * scale)));
+    m_renderThread->setLiveResize(active, pixelSize);
+    update();
 }
 
 void MpvVideoSurface::initializeGL()

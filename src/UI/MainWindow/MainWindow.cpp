@@ -20,9 +20,80 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QMouseEvent>
+#include <QPainter>
+#include <QPaintEvent>
+#include <QScreen>
+#include <QStackedLayout>
 #include <QTimer>
+#include <QWidget>
 
+#include <algorithm>
+#include <cmath>
 #include <stdexcept>
+
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
+class ProgressOnlyBar final : public QWidget {
+public:
+    explicit ProgressOnlyBar(QWidget *parent = nullptr)
+        : QWidget(parent)
+    {
+        setFocusPolicy(Qt::StrongFocus);
+        setCursor(Qt::PointingHandCursor);
+        setToolTip(
+            tr("Middle-click to restore the player"));
+    }
+
+    void setPlayback(double position, double duration)
+    {
+        m_position = std::max(0.0, position);
+        m_duration = std::max(0.0, duration);
+        update();
+    }
+
+    [[nodiscard]] double percentAt(int x) const noexcept
+    {
+        if (width() <= 1) {
+            return 0.0;
+        }
+        return std::clamp(
+            static_cast<double>(x)
+                / static_cast<double>(width() - 1),
+            0.0, 1.0);
+    }
+
+protected:
+    void paintEvent(QPaintEvent *event) override
+    {
+        Q_UNUSED(event)
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing, false);
+        painter.fillRect(rect(), QColor(10, 10, 10));
+
+        const int lineHeight = 4;
+        const QRect track(
+            0, (height() - lineHeight) / 2,
+            width(), lineHeight);
+        painter.fillRect(track, QColor(58, 58, 58));
+
+        const double ratio = m_duration > 0.0
+            ? std::clamp(m_position / m_duration, 0.0, 1.0)
+            : 0.0;
+        QRect played = track;
+        played.setWidth(
+            qRound(static_cast<double>(track.width()) * ratio));
+        painter.fillRect(played, QColor(238, 238, 238));
+    }
+
+private:
+    double m_position = 0.0;
+    double m_duration = 0.0;
+};
 
 MainWindow::MainWindow(PlayerCore *playerCore, QWidget *parent)
     : QMainWindow(parent),
@@ -33,6 +104,9 @@ MainWindow::MainWindow(PlayerCore *playerCore, QWidget *parent)
     }
     setupWindowChrome();
     setupMenus();
+    m_progressBar->setPlayback(
+        m_playerCore->info().videoPositionSec,
+        m_playerCore->info().videoDurationSec);
 
     connect(m_playerCore, &PlayerCore::stateChanged, this,
             [this](PlayerState state) {
@@ -58,6 +132,18 @@ MainWindow::MainWindow(PlayerCore *playerCore, QWidget *parent)
             setWindowTitle(
                 tr("%1 — Supernova").arg(mediaName));
         });
+    connect(m_playerCore, &PlayerCore::positionChanged,
+            this, [this](double position) {
+                m_progressBar->setPlayback(
+                    position,
+                    m_playerCore->info().videoDurationSec);
+            });
+    connect(m_playerCore, &PlayerCore::durationChanged,
+            this, [this](double duration) {
+                m_progressBar->setPlayback(
+                    m_playerCore->info().videoPositionSec,
+                    duration);
+            });
 }
 
 MainWindow::~MainWindow()
@@ -81,6 +167,9 @@ bool MainWindow::isFullScreenMode() const noexcept
 
 void MainWindow::toggleFullScreen()
 {
+    if (m_progressMode) {
+        return;
+    }
     switch (m_fullScreenState) {
     case FullScreenState::Windowed:
         enterFullScreen();
@@ -93,6 +182,15 @@ void MainWindow::toggleFullScreen()
         // IINA ignores repeated requests while the window system owns the
         // transition. Doing the same prevents contradictory state changes.
         return;
+    }
+}
+
+void MainWindow::toggleProgressMode()
+{
+    if (m_progressMode) {
+        exitProgressMode();
+    } else {
+        enterProgressMode();
     }
 }
 
@@ -185,6 +283,27 @@ void MainWindow::dropEvent(QDropEvent *event)
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 {
+    const bool isPlayerSurface =
+        watched == m_videoSurface || watched == m_progressBar;
+    if (isPlayerSurface
+        && event->type() == QEvent::MouseButtonPress) {
+        auto *mouseEvent = static_cast<QMouseEvent *>(event);
+        if (mouseEvent->button() == Qt::MiddleButton) {
+            toggleProgressMode();
+            mouseEvent->accept();
+            return true;
+        }
+        if (watched == m_progressBar
+            && mouseEvent->button() == Qt::LeftButton) {
+            m_playerCore->seekPercent(
+                m_progressBar->percentAt(
+                    qRound(mouseEvent->position().x()))
+                    * 100.0,
+                true);
+            mouseEvent->accept();
+            return true;
+        }
+    }
     if (watched == m_videoSurface
         && event->type() == QEvent::MouseButtonDblClick) {
         auto *mouseEvent = static_cast<QMouseEvent *>(event);
@@ -195,6 +314,28 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         }
     }
     return QMainWindow::eventFilter(watched, event);
+}
+
+bool MainWindow::nativeEvent(
+    const QByteArray &eventType, void *message, qintptr *result)
+{
+#ifdef Q_OS_WIN
+    Q_UNUSED(eventType)
+    Q_UNUSED(result)
+    const auto *nativeMessage = static_cast<MSG *>(message);
+    if (nativeMessage && m_videoSurface && !m_progressMode) {
+        if (nativeMessage->message == WM_ENTERSIZEMOVE) {
+            m_videoSurface->setLiveResize(true);
+        } else if (nativeMessage->message == WM_EXITSIZEMOVE) {
+            m_videoSurface->setLiveResize(false);
+        }
+    }
+#else
+    Q_UNUSED(eventType)
+    Q_UNUSED(message)
+    Q_UNUSED(result)
+#endif
+    return QMainWindow::nativeEvent(eventType, message, result);
 }
 
 void MainWindow::keyPressEvent(QKeyEvent *event)
@@ -230,14 +371,25 @@ void MainWindow::setupWindowChrome()
     setMinimumSize(480, 270);
     setAcceptDrops(true);
 
+    QWidget *contentRoot = new QWidget(this);
+    m_contentLayout = new QStackedLayout(contentRoot);
+    m_contentLayout->setContentsMargins(0, 0, 0, 0);
+    m_contentLayout->setStackingMode(QStackedLayout::StackOne);
+
     m_videoSurface =
-        new MpvVideoSurface(m_playerCore->mpvCore(), this);
+        new MpvVideoSurface(m_playerCore->mpvCore(), contentRoot);
     m_videoSurface->setAcceptDrops(false);
     m_videoSurface->setFocusPolicy(Qt::StrongFocus);
     m_videoSurface->installEventFilter(this);
     connect(m_videoSurface, &MpvVideoSurface::renderContextReady,
             this, &MainWindow::renderContextReady);
-    setCentralWidget(m_videoSurface);
+    m_progressBar = new ProgressOnlyBar(contentRoot);
+    m_progressBar->installEventFilter(this);
+    m_contentLayout->addWidget(m_videoSurface);
+    m_contentLayout->addWidget(m_progressBar);
+    m_contentLayout->setCurrentWidget(m_videoSurface);
+    setCentralWidget(contentRoot);
+    m_standardWindowFlags = windowFlags();
 }
 
 void MainWindow::setupMenus()
@@ -370,6 +522,134 @@ void MainWindow::enterFullScreen()
     });
 }
 
+void MainWindow::enterProgressMode()
+{
+    if (m_progressMode
+        || m_fullScreenState == FullScreenState::Entering
+        || m_fullScreenState == FullScreenState::Exiting) {
+        return;
+    }
+
+    m_progressMode = true;
+    m_progressRestoreFullScreen = isFullScreenMode();
+    m_progressRestoreMaximized =
+        !m_progressRestoreFullScreen && isMaximized();
+    if (!m_progressRestoreFullScreen
+        && !m_progressRestoreMaximized) {
+        m_progressRestoreGeometry = geometry();
+    }
+
+    if (m_progressRestoreFullScreen) {
+        exitFullScreen();
+        QTimer::singleShot(
+            0, this, &MainWindow::finishEnteringProgressMode);
+    } else {
+        finishEnteringProgressMode();
+    }
+}
+
+void MainWindow::finishEnteringProgressMode()
+{
+    if (!m_progressMode) {
+        return;
+    }
+    if (m_fullScreenState == FullScreenState::Entering
+        || m_fullScreenState == FullScreenState::Exiting) {
+        QTimer::singleShot(
+            0, this, &MainWindow::finishEnteringProgressMode);
+        return;
+    }
+
+    const QRect previousFrame = frameGeometry();
+    QScreen *targetScreen = screen();
+    const QRect available = targetScreen
+        ? targetScreen->availableGeometry()
+        : previousFrame;
+    constexpr int progressHeight = 14;
+    const int progressWidth = m_progressRestoreFullScreen
+        ? available.width()
+        : std::clamp(previousFrame.width(), 240, available.width());
+    const int progressX = m_progressRestoreFullScreen
+        ? available.left()
+        : std::clamp(
+              previousFrame.left(), available.left(),
+              available.right() - progressWidth + 1);
+    const int preferredY = m_progressRestoreFullScreen
+        ? available.bottom() - progressHeight + 1
+        : previousFrame.bottom() - progressHeight + 1;
+    const int progressY = std::clamp(
+        preferredY, available.top(),
+        available.bottom() - progressHeight + 1);
+
+    // Windows ignores a normal geometry while a window is maximized. Drop to
+    // the normal state before applying the compact frame, while retaining the
+    // saved state above for an exact restore.
+    showNormal();
+    m_contentLayout->setCurrentWidget(m_progressBar);
+    menuBar()->hide();
+    setMinimumSize(240, progressHeight);
+    setMaximumHeight(progressHeight);
+    setWindowFlags(
+        m_standardWindowFlags
+        | Qt::FramelessWindowHint
+        | Qt::WindowStaysOnTopHint);
+    setGeometry(
+        progressX, progressY, progressWidth, progressHeight);
+    show();
+    raise();
+    activateWindow();
+    m_progressBar->setFocus(Qt::OtherFocusReason);
+}
+
+void MainWindow::exitProgressMode()
+{
+    if (!m_progressMode) {
+        return;
+    }
+
+    const bool restoreFullScreen = m_progressRestoreFullScreen;
+    const bool restoreMaximized = m_progressRestoreMaximized;
+    m_progressMode = false;
+    m_progressRestoreFullScreen = false;
+    m_progressRestoreMaximized = false;
+
+    setWindowFlags(m_standardWindowFlags);
+    setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+    setMinimumSize(480, 270);
+    m_contentLayout->setCurrentWidget(m_videoSurface);
+    showNormal();
+
+    if (restoreFullScreen) {
+        if (m_windowedWasMaximized) {
+            showMaximized();
+        } else if (!m_windowedGeometry.isEmpty()) {
+            restoreGeometry(m_windowedGeometry);
+        }
+        m_fullScreenState = FullScreenState::Windowed;
+        enterFullScreen();
+    } else if (restoreMaximized) {
+        showMaximized();
+        syncFullScreenUi();
+    } else {
+        const QRect restoreGeometry = m_progressRestoreGeometry;
+        if (restoreGeometry.isValid()) {
+            setGeometry(restoreGeometry);
+            QTimer::singleShot(0, this, [this, restoreGeometry] {
+                if (!m_progressMode
+                    && m_fullScreenState == FullScreenState::Windowed
+                    && !isMaximized()) {
+                    setGeometry(restoreGeometry);
+                }
+            });
+        }
+        syncFullScreenUi();
+    }
+
+    m_videoSurface->setFocus(Qt::OtherFocusReason);
+    m_videoSurface->setLiveResize(false);
+    m_videoSurface->update();
+}
+
 void MainWindow::exitFullScreen()
 {
     if (m_fullScreenState != FullScreenState::FullScreen) {
@@ -437,7 +717,7 @@ void MainWindow::restoreAfterMinimize()
 void MainWindow::syncFullScreenUi()
 {
     const bool fullScreen = isFullScreenMode();
-    menuBar()->setVisible(!fullScreen);
+    menuBar()->setVisible(!fullScreen && !m_progressMode);
     if (m_fullScreenAction) {
         m_fullScreenAction->setChecked(fullScreen);
         m_fullScreenAction->setText(
