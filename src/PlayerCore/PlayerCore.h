@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Mpv/MpvEvent.h"
 #include "PlayerCore/PlaybackInfo.h"
 
 #include <QList>
@@ -49,21 +50,34 @@ signals:
     void positionChanged(double seconds);
     void durationChanged(double seconds);
     void videoSizeChanged(int width, int height);
+    void seekingChanged(bool seeking);
+    void playbackError(const QString &message, bool recoverable);
 
 private slots:
     void onMpvPropertyChanged(const QString &name, const QVariant &value);
     void onMpvFileStarted(const QString &path);
     void onMpvFileLoaded();
+    void onMpvFileEnded(const MpvEndFileInfo &info);
     void onMpvVideoReconfig();
+    void onMpvSeekStarted();
+    void onMpvPlaybackRestarted();
+    void onMpvEventQueueOverflow();
+    void onMpvError(const QString &context, int errorCode,
+                    const QString &message, bool recoverable);
     void onMpvShutdown();
 
 private:
     [[nodiscard]] bool canAccessMpv() const noexcept;
+    void handlePlaybackFailure(
+        const QString &message, int errorCode);
     void openPrimaryUrl(const QUrl &url);
+    void resynchronizeFromMpv();
     void updateVideoSize();
     void setState(PlayerState newState);
 
     std::unique_ptr<MpvCore> m_mpv;
     PlaybackInfo m_info;
     QList<QUrl> m_pendingUrls;
+    QString m_pendingPlaybackError;
+    bool m_isSeeking = false;
 };

@@ -122,6 +122,7 @@ MainWindow::MainWindow(PlayerCore *playerCore, QWidget *parent)
     connect(
         m_playerCore, &PlayerCore::currentUrlChanged,
         this, [this](const QUrl &url) {
+            setToolTip({});
             QString mediaName = url.fileName();
             if (mediaName.isEmpty()) {
                 mediaName = url.host();
@@ -143,6 +144,14 @@ MainWindow::MainWindow(PlayerCore *playerCore, QWidget *parent)
                 m_progressBar->setPlayback(
                     m_playerCore->info().videoPositionSec,
                     duration);
+            });
+    connect(m_playerCore, &PlayerCore::playbackError,
+            this, [this](const QString &message, bool recoverable) {
+                setToolTip(message);
+                setWindowTitle(
+                    recoverable
+                        ? tr("Playback Error — Supernova")
+                        : tr("Fatal Playback Error — Supernova"));
             });
 }
 

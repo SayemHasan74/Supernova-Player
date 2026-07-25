@@ -68,6 +68,14 @@ cmake --install build/release --prefix "$PWD/build/install"
 - Only `src/Mpv` may call mpv APIs directly.
 - Application features talk to `PlayerCore`; `MpvCore` is an implementation
   detail except where the video surface needs its render handle.
+- A dedicated high-priority event pump drains libmpv independently of the UI,
+  copies every payload before the next `mpv_wait_event`, and dispatches the
+  immutable result to Qt's main thread.
+- Commands and property writes use correlated asynchronous replies. Hooks
+  always continue exactly once, even when their handler is removed or throws.
+- End-file reasons, command failures, missing media, and event-queue overflow
+  are distinguished so `PlayerCore` can recover or resynchronize instead of
+  leaving stale playback state.
 
 ## Current playback controls
 

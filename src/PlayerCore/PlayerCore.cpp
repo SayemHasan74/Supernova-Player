@@ -43,10 +43,28 @@ PlayerCore::PlayerCore(QObject *parent)
             this, &PlayerCore::onMpvFileStarted);
     connect(m_mpv.get(), &MpvCore::fileLoaded,
             this, &PlayerCore::onMpvFileLoaded);
+    connect(m_mpv.get(), &MpvCore::fileEnded,
+            this, &PlayerCore::onMpvFileEnded);
     connect(m_mpv.get(), &MpvCore::videoReconfig,
             this, &PlayerCore::onMpvVideoReconfig);
+    connect(m_mpv.get(), &MpvCore::seekStarted,
+            this, &PlayerCore::onMpvSeekStarted);
+    connect(m_mpv.get(), &MpvCore::playbackRestarted,
+            this, &PlayerCore::onMpvPlaybackRestarted);
+    connect(m_mpv.get(), &MpvCore::eventQueueOverflow,
+            this, &PlayerCore::onMpvEventQueueOverflow);
+    connect(m_mpv.get(), &MpvCore::mpvError,
+            this, &PlayerCore::onMpvError);
     connect(m_mpv.get(), &MpvCore::mpvShutdown,
             this, &PlayerCore::onMpvShutdown);
+
+    m_mpv->addHook(
+        QStringLiteral("on_load_fail"), 0,
+        [](const QString &name, MpvCore::HookContinuation continueHook) {
+            Logger::warn(
+                QStringLiteral("libmpv hook invoked: %1").arg(name));
+            continueHook();
+        });
 
     connect(m_mpv.get(), &MpvCore::mpvLogMessage, this,
             [](const QString &prefix, const QString &level,
@@ -92,7 +110,16 @@ void PlayerCore::openUrls(const QList<QUrl> &urls)
         const QString source =
             url.isLocalFile() ? url.toLocalFile() : url.toString();
         m_mpv->command(
-            {QStringLiteral("loadfile"), source, QStringLiteral("append")});
+            {QStringLiteral("loadfile"), source,
+             QStringLiteral("append")},
+            [source](const MpvCommandResult &result) {
+                if (!result.succeeded()) {
+                    Logger::warn(
+                        QStringLiteral(
+                            "Could not append media '%1': %2")
+                            .arg(source, result.errorMessage));
+                }
+            });
     }
     if (validUrls.size() > 1) {
         Logger::info(
@@ -115,6 +142,7 @@ void PlayerCore::openPrimaryUrl(const QUrl &url)
     m_info.videoHeight = 0;
     m_info.videoPositionSec = 0.0;
     m_info.videoDurationSec = 0.0;
+    m_pendingPlaybackError.clear();
 
     // Pause before loadfile so audio cannot start before the first video frame
     // is ready, which is noticeable with expensive software decoding.
@@ -131,7 +159,15 @@ void PlayerCore::openPrimaryUrl(const QUrl &url)
     const QString source =
         url.isLocalFile() ? url.toLocalFile() : url.toString();
     m_mpv->command(
-        {QStringLiteral("loadfile"), source, QStringLiteral("replace")});
+        {QStringLiteral("loadfile"), source, QStringLiteral("replace")},
+        [this, source](const MpvCommandResult &result) {
+            if (!result.succeeded() && canAccessMpv()) {
+                handlePlaybackFailure(
+                    tr("Could not open %1: %2")
+                        .arg(source, result.errorMessage),
+                    result.errorCode);
+            }
+        });
     Logger::info(QStringLiteral("Loading media: %1").arg(source));
 }
 
@@ -263,8 +299,8 @@ void PlayerCore::shutdown()
     }
 
     setState(PlayerState::ShuttingDown);
-    // quit is asynchronous. MPV_EVENT_SHUTDOWN completes the handshake.
-    m_mpv->command({QStringLiteral("quit")});
+    // MPV_EVENT_SHUTDOWN completes the asynchronous quit handshake.
+    m_mpv->shutdown();
 }
 
 void PlayerCore::onMpvPropertyChanged(
@@ -284,10 +320,20 @@ void PlayerCore::onMpvPropertyChanged(
         }
     } else if (name == QStringLiteral("idle-active")
                && value.toBool()
-               && m_info.state != PlayerState::Loading
-               && m_info.state != PlayerState::Starting
-               && m_info.state != PlayerState::Loaded) {
+               && m_info.state != PlayerState::ShuttingDown
+               && m_info.state != PlayerState::ShutDown
+               && (m_info.state != PlayerState::Loading
+                   || !m_pendingPlaybackError.isEmpty())
+               && (m_info.state != PlayerState::Starting
+                   || !m_pendingPlaybackError.isEmpty())
+               && (m_info.state != PlayerState::Loaded
+                   || !m_pendingPlaybackError.isEmpty())) {
         setState(PlayerState::Idle);
+        if (!m_pendingPlaybackError.isEmpty()) {
+            const QString error = std::exchange(
+                m_pendingPlaybackError, {});
+            emit playbackError(error, true);
+        }
         if (!m_pendingUrls.isEmpty()) {
             const QList<QUrl> pending = std::exchange(m_pendingUrls, {});
             openUrls(pending);
@@ -332,6 +378,27 @@ void PlayerCore::onMpvFileLoaded()
     updateVideoSize();
 }
 
+void PlayerCore::onMpvFileEnded(const MpvEndFileInfo &info)
+{
+    if (!canAccessMpv()) {
+        return;
+    }
+
+    if (info.reason == MPV_END_FILE_REASON_ERROR) {
+        const QString source =
+            m_info.currentUrl.isLocalFile()
+                ? m_info.currentUrl.toLocalFile()
+                : m_info.currentUrl.toDisplayString();
+        m_pendingPlaybackError =
+            tr("Playback failed for %1: %2")
+                .arg(source, info.errorMessage);
+        Logger::warn(m_pendingPlaybackError);
+    } else if (info.reason == MPV_END_FILE_REASON_STOP
+               && m_info.state != PlayerState::Stopping) {
+        setState(PlayerState::Idle);
+    }
+}
+
 void PlayerCore::onMpvVideoReconfig()
 {
     if (m_info.state != PlayerState::Loaded) {
@@ -344,15 +411,114 @@ void PlayerCore::onMpvVideoReconfig()
     setState(PlayerState::Playing);
 }
 
+void PlayerCore::onMpvSeekStarted()
+{
+    if (!isLoaded(m_info.state) || m_isSeeking) {
+        return;
+    }
+    m_isSeeking = true;
+    emit seekingChanged(true);
+}
+
+void PlayerCore::onMpvPlaybackRestarted()
+{
+    if (!canAccessMpv()) {
+        return;
+    }
+    if (m_isSeeking) {
+        m_isSeeking = false;
+        emit seekingChanged(false);
+    }
+    if (m_info.state == PlayerState::Loaded
+        || m_info.state == PlayerState::Starting) {
+        setState(
+            m_mpv->getFlag(QStringLiteral("pause"))
+                ? PlayerState::Paused
+                : PlayerState::Playing);
+    }
+}
+
+void PlayerCore::onMpvEventQueueOverflow()
+{
+    if (!canAccessMpv()) {
+        return;
+    }
+    Logger::warn(
+        QStringLiteral(
+            "Recovering authoritative playback state after event loss"));
+    resynchronizeFromMpv();
+    emit playbackError(
+        tr("The playback event queue overflowed. "
+           "Player state was resynchronized."),
+        true);
+}
+
+void PlayerCore::onMpvError(
+    const QString &context, int errorCode,
+    const QString &message, bool recoverable)
+{
+    Q_UNUSED(errorCode)
+    if (context.startsWith(QStringLiteral("Command 'loadfile'"))) {
+        return;
+    }
+    emit playbackError(
+        tr("%1: %2").arg(context, message), recoverable);
+}
+
 void PlayerCore::onMpvShutdown()
 {
     setState(PlayerState::ShutDown);
+}
+
+void PlayerCore::handlePlaybackFailure(
+    const QString &message, int errorCode)
+{
+    m_pendingPlaybackError = message;
+    Q_UNUSED(errorCode)
+    if (m_info.state == PlayerState::Loading
+        || m_info.state == PlayerState::Starting
+        || m_info.state == PlayerState::Loaded) {
+        setState(PlayerState::Idle);
+    }
+    Logger::warn(message);
+    emit playbackError(message, true);
+    m_pendingPlaybackError.clear();
 }
 
 bool PlayerCore::canAccessMpv() const noexcept
 {
     return m_info.state != PlayerState::ShuttingDown
         && m_info.state != PlayerState::ShutDown;
+}
+
+void PlayerCore::resynchronizeFromMpv()
+{
+    if (!canAccessMpv()) {
+        return;
+    }
+
+    m_info.videoPositionSec =
+        m_mpv->getDouble(QStringLiteral("time-pos"));
+    m_info.videoDurationSec =
+        m_mpv->getDouble(QStringLiteral("duration"));
+    m_info.volume =
+        m_mpv->getDouble(QStringLiteral("volume"));
+    m_info.isMuted =
+        m_mpv->getFlag(QStringLiteral("mute"));
+    m_info.playSpeed =
+        m_mpv->getDouble(QStringLiteral("speed"));
+    emit positionChanged(m_info.videoPositionSec);
+    emit durationChanged(m_info.videoDurationSec);
+    updateVideoSize();
+
+    if (m_mpv->getFlag(QStringLiteral("idle-active"))) {
+        setState(PlayerState::Idle);
+    } else if (isLoaded(m_info.state)) {
+        setState(
+            m_mpv->getFlag(QStringLiteral("pause"))
+                ? PlayerState::Paused
+                : PlayerState::Playing);
+    }
 }
 
 void PlayerCore::updateVideoSize()
