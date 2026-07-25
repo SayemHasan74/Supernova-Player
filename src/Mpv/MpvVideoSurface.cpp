@@ -37,6 +37,8 @@ public:
         std::uint64_t serial = 0;
         int contentWidth = 0;
         int contentHeight = 0;
+        GLsync renderFence = nullptr;
+        GLsync presentationFence = nullptr;
     };
 
     static constexpr std::size_t BufferCount = 3;
@@ -285,6 +287,8 @@ void MpvVideoSurface::paintGL()
     int sourceWidth = 0;
     int sourceHeight = 0;
     std::uint64_t generation = 0;
+    GLsync renderFence = nullptr;
+    GLsync previousPresentationFence = nullptr;
     {
         const std::scoped_lock lock(m_framePool->mutex);
         std::uint64_t newestSerial = 0;
@@ -326,9 +330,21 @@ void MpvVideoSurface::paintGL()
         sourceWidth = selected.contentWidth;
         sourceHeight = selected.contentHeight;
         generation = m_framePool->generation;
+        renderFence = selected.renderFence;
+        selected.renderFence = nullptr;
+        previousPresentationFence = selected.presentationFence;
+        selected.presentationFence = nullptr;
     }
 
     QOpenGLExtraFunctions *functions = context()->extraFunctions();
+    if (previousPresentationFence) {
+        functions->glDeleteSync(previousPresentationFence);
+    }
+    if (renderFence) {
+        functions->glWaitSync(
+            renderFence, 0, GL_TIMEOUT_IGNORED);
+        functions->glDeleteSync(renderFence);
+    }
     functions->glClearColor(0.0F, 0.0F, 0.0F, 1.0F);
     functions->glClear(GL_COLOR_BUFFER_BIT);
 
@@ -368,21 +384,28 @@ void MpvVideoSurface::paintGL()
             GL_COLOR_BUFFER_BIT, GL_LINEAR);
         functions->glBindFramebuffer(
             GL_FRAMEBUFFER, defaultFramebufferObject());
-
-        // The texture belongs to a shared worker context. Complete this small
-        // copy before the slot becomes reusable so the worker can never
-        // overwrite a texture that the GUI is still presenting.
-        functions->glFinish();
     }
 
+    // Publish a GPU fence instead of blocking the GUI with glFinish(). The
+    // worker waits on this fence only if it later reuses this exact buffer.
+    // This keeps live resize asynchronous, matching IINA's glFlush-based
+    // presentation while preserving cross-context correctness.
+    GLsync presentationFence = functions->glFenceSync(
+        GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    functions->glFlush();
     {
         const std::scoped_lock lock(m_framePool->mutex);
         if (generation == m_framePool->generation) {
             auto &selected = m_framePool->buffers[selectedIndex];
             if (selected.state == SharedFramePool::State::Displaying) {
+                selected.presentationFence = presentationFence;
+                presentationFence = nullptr;
                 selected.state = SharedFramePool::State::Presented;
             }
         }
+    }
+    if (presentationFence) {
+        functions->glDeleteSync(presentationFence);
     }
     m_framePool->condition.notify_all();
 }
@@ -480,11 +503,24 @@ void MpvVideoSurface::destroyRenderContextOnWorker()
         m_renderContext = nullptr;
     }
 
-    QOpenGLFunctions *functions =
-        QOpenGLContext::currentContext()->functions();
+    QOpenGLContext *currentContext =
+        QOpenGLContext::currentContext();
+    QOpenGLFunctions *functions = currentContext->functions();
+    QOpenGLExtraFunctions *extraFunctions =
+        currentContext->extraFunctions();
     {
         const std::scoped_lock lock(m_framePool->mutex);
         for (auto &slot : m_framePool->buffers) {
+            if (slot.renderFence) {
+                extraFunctions->glDeleteSync(slot.renderFence);
+            }
+            if (slot.presentationFence) {
+                extraFunctions->glWaitSync(
+                    slot.presentationFence, 0,
+                    GL_TIMEOUT_IGNORED);
+                extraFunctions->glDeleteSync(
+                    slot.presentationFence);
+            }
             if (slot.framebuffer != 0) {
                 functions->glDeleteFramebuffers(
                     1, &slot.framebuffer);
@@ -611,6 +647,20 @@ void MpvVideoSurface::ensureWorkerFramebuffer(const QSize &pixelSize)
 
     std::size_t sourceIndex = SharedFramePool::BufferCount;
     std::uint64_t newestSerial = 0;
+    for (auto &slot : m_framePool->buffers) {
+        if (slot.renderFence) {
+            extraFunctions->glDeleteSync(slot.renderFence);
+            slot.renderFence = nullptr;
+        }
+        if (slot.presentationFence) {
+            extraFunctions->glWaitSync(
+                slot.presentationFence, 0,
+                GL_TIMEOUT_IGNORED);
+            extraFunctions->glDeleteSync(
+                slot.presentationFence);
+            slot.presentationFence = nullptr;
+        }
+    }
     for (std::size_t index = 0;
          index < SharedFramePool::BufferCount; ++index) {
         const auto &slot = m_framePool->buffers[index];
@@ -687,6 +737,8 @@ void MpvVideoSurface::renderFrameOnWorker(const QSize &pixelSize)
     int targetWidth = 0;
     int targetHeight = 0;
     std::uint64_t generation = 0;
+    GLsync presentationFence = nullptr;
+    GLsync staleRenderFence = nullptr;
     {
         const std::scoped_lock lock(m_framePool->mutex);
         for (std::size_t index = 0;
@@ -724,8 +776,22 @@ void MpvVideoSurface::renderFrameOnWorker(const QSize &pixelSize)
         targetWidth = m_framePool->width;
         targetHeight = m_framePool->height;
         generation = m_framePool->generation;
+        presentationFence = slot.presentationFence;
+        slot.presentationFence = nullptr;
+        staleRenderFence = slot.renderFence;
+        slot.renderFence = nullptr;
     }
 
+    QOpenGLExtraFunctions *extraFunctions =
+        QOpenGLContext::currentContext()->extraFunctions();
+    if (presentationFence) {
+        extraFunctions->glWaitSync(
+            presentationFence, 0, GL_TIMEOUT_IGNORED);
+        extraFunctions->glDeleteSync(presentationFence);
+    }
+    if (staleRenderFence) {
+        extraFunctions->glDeleteSync(staleRenderFence);
+    }
     mpv_opengl_fbo frameBuffer{
         static_cast<int>(framebuffer),
         targetWidth,
@@ -737,13 +803,14 @@ void MpvVideoSurface::renderFrameOnWorker(const QSize &pixelSize)
         {MPV_RENDER_PARAM_FLIP_Y, &flipVertically},
         {MPV_RENDER_PARAM_INVALID, nullptr}};
     mpv_render_context_render(m_renderContext, parameters);
-    // Finish on the worker, never the GUI, before publishing the texture to
-    // another context. This removes cross-context partial/black frames.
-    QOpenGLContext::currentContext()->functions()->glFinish();
+    GLsync completedRenderFence = extraFunctions->glFenceSync(
+        GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    extraFunctions->glFlush();
 
     {
         const std::scoped_lock lock(m_framePool->mutex);
         if (generation != m_framePool->generation) {
+            extraFunctions->glDeleteSync(completedRenderFence);
             return;
         }
         for (auto &slot : m_framePool->buffers) {
@@ -755,6 +822,7 @@ void MpvVideoSurface::renderFrameOnWorker(const QSize &pixelSize)
         selected.serial = ++m_framePool->nextSerial;
         selected.contentWidth = targetWidth;
         selected.contentHeight = targetHeight;
+        selected.renderFence = completedRenderFence;
         selected.state = SharedFramePool::State::Ready;
     }
 
