@@ -1,0 +1,8 @@
+/build/
+/deps/mpv/
+*.user
+*.user.*
+CMakeUserPresets.json
+.vs/
+out/
+/aqtinstall.log

@@ -1,0 +1,5 @@
+<RCC>
+  <qresource prefix="/">
+    <file alias="icons/supernova.ico">icons/supernova.ico</file>
+  </qresource>
+</RCC>
