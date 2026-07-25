@@ -375,6 +375,24 @@ MpvCore::MpvCore(QObject *parent)
         observe(QStringLiteral("speed"), MPV_FORMAT_DOUBLE);
         observe(QStringLiteral("idle-active"), MPV_FORMAT_FLAG);
         observe(QStringLiteral("eof-reached"), MPV_FORMAT_FLAG);
+        observe(QStringLiteral("paused-for-cache"), MPV_FORMAT_FLAG);
+        observe(
+            QStringLiteral("cache-buffering-state"),
+            MPV_FORMAT_INT64);
+        observe(QStringLiteral("cache-speed"), MPV_FORMAT_INT64);
+        observe(
+            QStringLiteral("demuxer-cache-duration"),
+            MPV_FORMAT_DOUBLE);
+        observe(
+            QStringLiteral("demuxer-cache-idle"),
+            MPV_FORMAT_FLAG);
+        observe(
+            QStringLiteral("demuxer-cache-state"),
+            MPV_FORMAT_NODE);
+        observe(
+            QStringLiteral("demuxer-via-network"),
+            MPV_FORMAT_FLAG);
+        observe(QStringLiteral("seeking"), MPV_FORMAT_FLAG);
 
         requireInitializationStep(
             mpv_initialize(m_mpv), "mpv_initialize failed");

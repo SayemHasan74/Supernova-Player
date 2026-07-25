@@ -1,5 +1,7 @@
 #pragma once
 
+#include <QMetaType>
+
 // Declaration order is load-bearing. Re-derive isActive() and isLoaded()
 // before changing it.
 enum class PlayerState {
@@ -34,3 +36,5 @@ static_assert(!isActive(PlayerState::Stopping));
 static_assert(!isActive(PlayerState::Idle));
 static_assert(!isLoaded(PlayerState::Idle));
 static_assert(!isActive(PlayerState::ShuttingDown));
+
+Q_DECLARE_METATYPE(PlayerState)

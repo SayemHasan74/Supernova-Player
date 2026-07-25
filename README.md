@@ -76,6 +76,12 @@ cmake --install build/release --prefix "$PWD/build/install"
 - End-file reasons, command failures, missing media, and event-queue overflow
   are distinguished so `PlayerCore` can recover or resynchronize instead of
   leaving stale playback state.
+- Buffering remains independent from play/pause state and tracks mpv's cache
+  pause, fill percentage, cached bytes, input speed, duration, and network
+  source status.
+- End of file keeps loaded media restartable, clamps its displayed position
+  to the duration, and seeks to zero when resumed. `Idle` is reserved for
+  mpv's authoritative `idle-active` notification after media is unloaded.
 
 ## Current playback controls
 

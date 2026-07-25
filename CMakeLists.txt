@@ -35,6 +35,7 @@ qt_add_executable(Supernova WIN32
     src/Mpv/MpvVideoSurface.h
     src/Mpv/MpvVideoSurface.cpp
     src/PlayerCore/PlayerState.h
+    src/PlayerCore/BufferingInfo.h
     src/PlayerCore/PlaybackInfo.h
     src/PlayerCore/PlayerCore.h
     src/PlayerCore/PlayerCore.cpp
@@ -145,9 +146,44 @@ if(BUILD_TESTING)
         VERBATIM
     )
     add_test(NAME MpvCore COMMAND SupernovaMpvCoreTests)
+
+    qt_add_executable(SupernovaPlayerCoreLifecycleTests
+        tests/PlayerCoreLifecycleTests.cpp
+        src/Core/Logger.h
+        src/Core/Logger.cpp
+        src/Mpv/MpvCore.h
+        src/Mpv/MpvCore.cpp
+        src/Mpv/MpvEvent.h
+        src/PlayerCore/BufferingInfo.h
+        src/PlayerCore/PlaybackInfo.h
+        src/PlayerCore/PlayerCore.h
+        src/PlayerCore/PlayerCore.cpp
+        src/PlayerCore/PlayerState.h
+    )
+    target_include_directories(
+        SupernovaPlayerCoreLifecycleTests PRIVATE src)
+    target_link_libraries(
+        SupernovaPlayerCoreLifecycleTests PRIVATE
+        Qt6::Core
+        Qt6::Test
+        Supernova::mpv)
+    set_target_properties(
+        SupernovaPlayerCoreLifecycleTests PROPERTIES
+        WIN32_EXECUTABLE FALSE)
+    add_custom_command(
+        TARGET SupernovaPlayerCoreLifecycleTests POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "${MPV_RUNTIME_DLL}"
+            "$<TARGET_FILE_DIR:SupernovaPlayerCoreLifecycleTests>"
+        VERBATIM
+    )
+    add_test(
+        NAME PlayerCoreLifecycle
+        COMMAND SupernovaPlayerCoreLifecycleTests)
+
     if(WIN32)
         set_tests_properties(
-            MediaSourceResolver MpvCore PROPERTIES
+            MediaSourceResolver MpvCore PlayerCoreLifecycle PROPERTIES
             ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
     endif()

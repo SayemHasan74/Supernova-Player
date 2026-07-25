@@ -51,6 +51,11 @@ signals:
     void durationChanged(double seconds);
     void videoSizeChanged(int width, int height);
     void seekingChanged(bool seeking);
+    void bufferingChanged(const BufferingInfo &buffering);
+    void eofChanged(bool reached);
+    void mediaLoaded(const QUrl &url);
+    void mediaEnded(const MpvEndFileInfo &info);
+    void playbackStopped();
     void playbackError(const QString &message, bool recoverable);
 
 private slots:
@@ -59,6 +64,7 @@ private slots:
     void onMpvFileLoaded();
     void onMpvFileEnded(const MpvEndFileInfo &info);
     void onMpvVideoReconfig();
+    void onMpvAudioReconfig();
     void onMpvSeekStarted();
     void onMpvPlaybackRestarted();
     void onMpvEventQueueOverflow();
@@ -71,6 +77,10 @@ private:
     void handlePlaybackFailure(
         const QString &message, int errorCode);
     void openPrimaryUrl(const QUrl &url);
+    void finishLoadingWhenReady();
+    void setBufferingInfo(const BufferingInfo &buffering);
+    void setEofReached(bool reached);
+    void resetTransientPlaybackInfo();
     void resynchronizeFromMpv();
     void updateVideoSize();
     void setState(PlayerState newState);
@@ -80,4 +90,6 @@ private:
     QList<QUrl> m_pendingUrls;
     QString m_pendingPlaybackError;
     bool m_isSeeking = false;
+
+    friend class PlayerCoreLifecycleTests;
 };

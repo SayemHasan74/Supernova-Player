@@ -1,5 +1,6 @@
 #pragma once
 
+#include "PlayerCore/BufferingInfo.h"
 #include "PlayerCore/PlayerState.h"
 
 #include <QString>
@@ -16,10 +17,16 @@ struct PlaybackInfo {
 
     double videoPositionSec = 0.0;
     double videoDurationSec = 0.0;
+    bool eofReached = false;
+    bool isSeeking = false;
 
     double volume = 100.0;
     bool isMuted = false;
     double playSpeed = 1.0;
+
+    bool hasVideo = false;
+    bool hasAudio = false;
+    BufferingInfo buffering;
 
     bool justOpenedFile = false;
 };

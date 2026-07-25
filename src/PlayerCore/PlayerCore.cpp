@@ -4,6 +4,9 @@
 #include "Mpv/MpvCore.h"
 
 #include <algorithm>
+#include <cmath>
+#include <QCoreApplication>
+#include <QFileInfo>
 #include <utility>
 
 namespace {
@@ -47,6 +50,8 @@ PlayerCore::PlayerCore(QObject *parent)
             this, &PlayerCore::onMpvFileEnded);
     connect(m_mpv.get(), &MpvCore::videoReconfig,
             this, &PlayerCore::onMpvVideoReconfig);
+    connect(m_mpv.get(), &MpvCore::audioReconfig,
+            this, &PlayerCore::onMpvAudioReconfig);
     connect(m_mpv.get(), &MpvCore::seekStarted,
             this, &PlayerCore::onMpvSeekStarted);
     connect(m_mpv.get(), &MpvCore::playbackRestarted,
@@ -142,6 +147,15 @@ void PlayerCore::openPrimaryUrl(const QUrl &url)
     m_info.videoHeight = 0;
     m_info.videoPositionSec = 0.0;
     m_info.videoDurationSec = 0.0;
+    m_info.hasVideo = false;
+    m_info.hasAudio = false;
+    setEofReached(false);
+    if (m_isSeeking) {
+        m_isSeeking = false;
+        m_info.isSeeking = false;
+        emit seekingChanged(false);
+    }
+    setBufferingInfo({});
     m_pendingPlaybackError.clear();
 
     // Pause before loadfile so audio cannot start before the first video frame
@@ -150,9 +164,13 @@ void PlayerCore::openPrimaryUrl(const QUrl &url)
         m_mpv->setFlag(QStringLiteral("pause"), true);
     }
 
-    // Delay force-window until an actual load. Setting it during mpv setup can
-    // race VO creation against the QOpenGLWidget render-context setup.
-    m_mpv->setString(QStringLiteral("force-window"), QStringLiteral("yes"));
+    // Delay force-window until an actual GUI load. Setting it during mpv setup
+    // can race VO creation against the QOpenGLWidget render-context setup.
+    if (QCoreApplication::instance()
+        && QCoreApplication::instance()->inherits("QApplication")) {
+        m_mpv->setString(
+            QStringLiteral("force-window"), QStringLiteral("yes"));
+    }
 
     m_info.justOpenedFile = true;
     setState(PlayerState::Loading);
@@ -173,9 +191,7 @@ void PlayerCore::openPrimaryUrl(const QUrl &url)
 
 void PlayerCore::togglePause()
 {
-    if (m_info.state == PlayerState::Paused
-        || (m_info.state == PlayerState::Idle
-            && !m_info.currentUrl.isEmpty())) {
+    if (m_info.state == PlayerState::Paused) {
         resume();
     } else if (isLoaded(m_info.state)) {
         pause();
@@ -194,22 +210,21 @@ void PlayerCore::pause()
 
 void PlayerCore::resume()
 {
-    const bool restartingAtEof =
-        m_info.state == PlayerState::Idle
-        && !m_info.currentUrl.isEmpty()
-        && canAccessMpv()
-        && m_mpv->getFlag(QStringLiteral("eof-reached"));
-    if (!isLoaded(m_info.state) && !restartingAtEof) {
+    if (!isLoaded(m_info.state)) {
         return;
     }
 
-    if (m_mpv->getFlag(QStringLiteral("eof-reached"))) {
+    const bool restartingAtEof =
+        m_info.eofReached
+        || m_mpv->getFlag(QStringLiteral("eof-reached"));
+    if (restartingAtEof) {
         m_mpv->command(
             {QStringLiteral("seek"), QStringLiteral("0"),
              QStringLiteral("absolute+exact")});
     }
     m_mpv->setFlag(QStringLiteral("pause"), false);
     if (restartingAtEof) {
+        setEofReached(false);
         setState(PlayerState::Playing);
     }
 }
@@ -314,21 +329,21 @@ void PlayerCore::onMpvPropertyChanged(
         && isLoaded(m_info.state)
         && m_info.state != PlayerState::Loaded) {
         const bool paused = value.toBool();
-        if ((m_info.state == PlayerState::Paused) != paused) {
+        if ((m_info.state == PlayerState::Paused) != paused
+            && (paused || !m_info.eofReached)) {
             setState(
                 paused ? PlayerState::Paused : PlayerState::Playing);
         }
     } else if (name == QStringLiteral("idle-active")
                && value.toBool()
+               && m_info.state != PlayerState::Idle
                && m_info.state != PlayerState::ShuttingDown
                && m_info.state != PlayerState::ShutDown
                && (m_info.state != PlayerState::Loading
-                   || !m_pendingPlaybackError.isEmpty())
-               && (m_info.state != PlayerState::Starting
-                   || !m_pendingPlaybackError.isEmpty())
-               && (m_info.state != PlayerState::Loaded
                    || !m_pendingPlaybackError.isEmpty())) {
+        resetTransientPlaybackInfo();
         setState(PlayerState::Idle);
+        emit playbackStopped();
         if (!m_pendingPlaybackError.isEmpty()) {
             const QString error = std::exchange(
                 m_pendingPlaybackError, {});
@@ -338,22 +353,79 @@ void PlayerCore::onMpvPropertyChanged(
             const QList<QUrl> pending = std::exchange(m_pendingUrls, {});
             openUrls(pending);
         }
-    } else if (name == QStringLiteral("eof-reached")
-               && value.toBool()
-               && isLoaded(m_info.state)) {
-        setState(PlayerState::Idle);
+    } else if (name == QStringLiteral("eof-reached")) {
+        setEofReached(value.toBool());
     } else if (name == QStringLiteral("time-pos")) {
-        m_info.videoPositionSec = value.toDouble();
+        const double position =
+            m_info.eofReached && m_info.videoDurationSec > 0.0
+                ? m_info.videoDurationSec
+                : value.toDouble();
+        m_info.videoPositionSec = std::max(0.0, position);
+        if (m_info.videoDurationSec > 0.0) {
+            m_info.videoPositionSec = std::min(
+                m_info.videoPositionSec,
+                m_info.videoDurationSec);
+        }
         emit positionChanged(m_info.videoPositionSec);
     } else if (name == QStringLiteral("duration")) {
-        m_info.videoDurationSec = value.toDouble();
+        const double duration = value.toDouble();
+        m_info.videoDurationSec =
+            std::isfinite(duration) ? std::max(0.0, duration) : 0.0;
         emit durationChanged(m_info.videoDurationSec);
+        if (m_info.eofReached && m_info.videoDurationSec > 0.0) {
+            m_info.videoPositionSec = m_info.videoDurationSec;
+            emit positionChanged(m_info.videoPositionSec);
+        }
     } else if (name == QStringLiteral("volume")) {
         m_info.volume = value.toDouble();
     } else if (name == QStringLiteral("mute")) {
         m_info.isMuted = value.toBool();
     } else if (name == QStringLiteral("speed")) {
         m_info.playSpeed = value.toDouble();
+    } else if (name == QStringLiteral("seeking")) {
+        const bool seeking = value.toBool();
+        if (isLoaded(m_info.state) && m_isSeeking != seeking) {
+            m_isSeeking = seeking;
+            m_info.isSeeking = seeking;
+            emit seekingChanged(seeking);
+        }
+    } else if (name == QStringLiteral("demuxer-via-network")) {
+        m_info.isNetworkResource = value.toBool();
+    } else if (name == QStringLiteral("paused-for-cache")) {
+        BufferingInfo buffering = m_info.buffering;
+        buffering.active = value.toBool();
+        setBufferingInfo(buffering);
+    } else if (name == QStringLiteral("cache-buffering-state")) {
+        BufferingInfo buffering = m_info.buffering;
+        buffering.percent = std::clamp(
+            static_cast<int>(value.toLongLong()), 0, 100);
+        setBufferingInfo(buffering);
+    } else if (name == QStringLiteral("cache-speed")) {
+        BufferingInfo buffering = m_info.buffering;
+        buffering.cacheSpeedBytesPerSecond =
+            std::max<qint64>(0, value.toLongLong());
+        setBufferingInfo(buffering);
+    } else if (
+        name == QStringLiteral("demuxer-cache-duration")) {
+        BufferingInfo buffering = m_info.buffering;
+        buffering.cacheDurationSec =
+            std::max(0.0, value.toDouble());
+        setBufferingInfo(buffering);
+    } else if (name == QStringLiteral("demuxer-cache-idle")) {
+        BufferingInfo buffering = m_info.buffering;
+        buffering.cacheIdle = value.toBool();
+        setBufferingInfo(buffering);
+    } else if (name == QStringLiteral("demuxer-cache-state")) {
+        const QVariantMap state = value.toMap();
+        BufferingInfo buffering = m_info.buffering;
+        buffering.cacheUsedBytes = std::max<qint64>(
+            0, state.value(QStringLiteral("fw-bytes")).toLongLong());
+        const qint64 rawInputRate =
+            state.value(QStringLiteral("raw-input-rate")).toLongLong();
+        if (rawInputRate >= 0) {
+            buffering.cacheSpeedBytesPerSecond = rawInputRate;
+        }
+        setBufferingInfo(buffering);
     }
 }
 
@@ -364,6 +436,23 @@ void PlayerCore::onMpvFileStarted(const QString &path)
     }
     if (!path.isEmpty()) {
         Logger::info(QStringLiteral("mpv started file: %1").arg(path));
+        const QUrl startedUrl =
+            QFileInfo(path).isAbsolute()
+                ? QUrl::fromLocalFile(path)
+                : QUrl::fromUserInput(path);
+        if (startedUrl.isValid()
+            && startedUrl != m_info.currentUrl) {
+            m_info.currentUrl = startedUrl;
+            m_info.isNetworkResource = !startedUrl.isLocalFile();
+            emit currentUrlChanged(startedUrl);
+        }
+    }
+    setEofReached(false);
+    setBufferingInfo({});
+    if (m_isSeeking) {
+        m_isSeeking = false;
+        m_info.isSeeking = false;
+        emit seekingChanged(false);
     }
     setState(PlayerState::Starting);
 }
@@ -374,8 +463,27 @@ void PlayerCore::onMpvFileLoaded()
         return;
     }
     setState(PlayerState::Loaded);
-    m_info.justOpenedFile = false;
-    updateVideoSize();
+    const QString videoTrack =
+        m_mpv->getString(QStringLiteral("vid"));
+    const QString audioTrack =
+        m_mpv->getString(QStringLiteral("aid"));
+    m_info.hasVideo =
+        !videoTrack.isEmpty() && videoTrack != QStringLiteral("no");
+    m_info.hasAudio =
+        !audioTrack.isEmpty() && audioTrack != QStringLiteral("no");
+    m_info.videoDurationSec = std::max(
+        0.0, m_mpv->getDouble(QStringLiteral("duration")));
+    m_info.videoPositionSec = std::max(
+        0.0, m_mpv->getDouble(QStringLiteral("time-pos")));
+    emit durationChanged(m_info.videoDurationSec);
+    emit positionChanged(m_info.videoPositionSec);
+    if (m_info.hasVideo) {
+        updateVideoSize();
+    }
+    emit mediaLoaded(m_info.currentUrl);
+    if (!m_info.hasVideo) {
+        finishLoadingWhenReady();
+    }
 }
 
 void PlayerCore::onMpvFileEnded(const MpvEndFileInfo &info)
@@ -385,6 +493,7 @@ void PlayerCore::onMpvFileEnded(const MpvEndFileInfo &info)
     }
 
     if (info.reason == MPV_END_FILE_REASON_ERROR) {
+        setBufferingInfo({});
         const QString source =
             m_info.currentUrl.isLocalFile()
                 ? m_info.currentUrl.toLocalFile()
@@ -393,29 +502,46 @@ void PlayerCore::onMpvFileEnded(const MpvEndFileInfo &info)
             tr("Playback failed for %1: %2")
                 .arg(source, info.errorMessage);
         Logger::warn(m_pendingPlaybackError);
-    } else if (info.reason == MPV_END_FILE_REASON_STOP
-               && m_info.state != PlayerState::Stopping) {
+    } else if (info.reason == MPV_END_FILE_REASON_EOF) {
+        setBufferingInfo({});
+        setEofReached(true);
+    } else if (info.reason == MPV_END_FILE_REASON_STOP) {
         // loadfile replace ends the previous playlist entry with STOP before
         // starting the replacement. openPrimaryUrl has already moved us to
         // Loading, so treating that expected event as an explicit stop would
         // make the following START_FILE/FILE_LOADED events look stale and
         // leave the new media black.
-        if (m_info.state != PlayerState::Loading) {
-            setState(PlayerState::Idle);
-        }
+        // For a real stop, idle-active is the authoritative notification that
+        // the media has actually been unloaded.
+    } else if (info.reason == MPV_END_FILE_REASON_REDIRECT) {
+        Logger::info(
+            QStringLiteral(
+                "Media redirected to %1 playlist entr%2")
+                .arg(info.playlistInsertCount)
+                .arg(info.playlistInsertCount == 1
+                         ? QStringLiteral("y")
+                         : QStringLiteral("ies")));
     }
+    emit mediaEnded(info);
 }
 
 void PlayerCore::onMpvVideoReconfig()
 {
-    if (m_info.state != PlayerState::Loaded) {
+    if (!isLoaded(m_info.state)) {
         return;
     }
     updateVideoSize();
-    if (m_mpv->getFlag(QStringLiteral("pause"))) {
-        m_mpv->setFlag(QStringLiteral("pause"), false);
+    if (m_info.state == PlayerState::Loaded) {
+        finishLoadingWhenReady();
     }
-    setState(PlayerState::Playing);
+}
+
+void PlayerCore::onMpvAudioReconfig()
+{
+    if (m_info.state == PlayerState::Loaded
+        && !m_info.hasVideo) {
+        finishLoadingWhenReady();
+    }
 }
 
 void PlayerCore::onMpvSeekStarted()
@@ -424,6 +550,8 @@ void PlayerCore::onMpvSeekStarted()
         return;
     }
     m_isSeeking = true;
+    m_info.isSeeking = true;
+    setEofReached(false);
     emit seekingChanged(true);
 }
 
@@ -434,14 +562,12 @@ void PlayerCore::onMpvPlaybackRestarted()
     }
     if (m_isSeeking) {
         m_isSeeking = false;
+        m_info.isSeeking = false;
         emit seekingChanged(false);
     }
-    if (m_info.state == PlayerState::Loaded
-        || m_info.state == PlayerState::Starting) {
-        setState(
-            m_mpv->getFlag(QStringLiteral("pause"))
-                ? PlayerState::Paused
-                : PlayerState::Playing);
+    if (m_info.eofReached
+        && !m_mpv->getFlag(QStringLiteral("eof-reached"))) {
+        setEofReached(false);
     }
 }
 
@@ -485,7 +611,9 @@ void PlayerCore::handlePlaybackFailure(
     if (m_info.state == PlayerState::Loading
         || m_info.state == PlayerState::Starting
         || m_info.state == PlayerState::Loaded) {
+        resetTransientPlaybackInfo();
         setState(PlayerState::Idle);
+        emit playbackStopped();
     }
     Logger::warn(message);
     emit playbackError(message, true);
@@ -498,9 +626,87 @@ bool PlayerCore::canAccessMpv() const noexcept
         && m_info.state != PlayerState::ShutDown;
 }
 
+void PlayerCore::finishLoadingWhenReady()
+{
+    if (m_info.state != PlayerState::Loaded) {
+        return;
+    }
+    if (m_info.hasVideo
+        && (m_info.videoWidth <= 0 || m_info.videoHeight <= 0)) {
+        return;
+    }
+
+    if (m_info.justOpenedFile
+        && m_mpv->getFlag(QStringLiteral("pause"))) {
+        m_mpv->setFlag(QStringLiteral("pause"), false);
+    }
+    const bool shouldPlay = m_info.justOpenedFile
+        || !m_mpv->getFlag(QStringLiteral("pause"));
+    m_info.justOpenedFile = false;
+    setState(
+        shouldPlay ? PlayerState::Playing : PlayerState::Paused);
+}
+
+void PlayerCore::setBufferingInfo(
+    const BufferingInfo &buffering)
+{
+    if (m_info.buffering == buffering) {
+        return;
+    }
+    m_info.buffering = buffering;
+    emit bufferingChanged(m_info.buffering);
+}
+
+void PlayerCore::setEofReached(bool reached)
+{
+    if (m_info.eofReached == reached) {
+        return;
+    }
+    m_info.eofReached = reached;
+    if (reached) {
+        BufferingInfo buffering = m_info.buffering;
+        buffering.active = false;
+        setBufferingInfo(buffering);
+        if (m_info.videoDurationSec > 0.0) {
+            m_info.videoPositionSec = m_info.videoDurationSec;
+            emit positionChanged(m_info.videoPositionSec);
+        }
+        if (isLoaded(m_info.state)) {
+            setState(PlayerState::Paused);
+        }
+    }
+    emit eofChanged(reached);
+}
+
+void PlayerCore::resetTransientPlaybackInfo()
+{
+    if (m_isSeeking) {
+        m_isSeeking = false;
+        emit seekingChanged(false);
+    }
+    m_info.isSeeking = false;
+    setBufferingInfo({});
+    setEofReached(false);
+    m_info.hasVideo = false;
+    m_info.hasAudio = false;
+    m_info.justOpenedFile = false;
+    m_info.videoWidth = 0;
+    m_info.videoHeight = 0;
+    m_info.videoPositionSec = 0.0;
+    m_info.videoDurationSec = 0.0;
+    emit videoSizeChanged(0, 0);
+    emit positionChanged(0.0);
+    emit durationChanged(0.0);
+}
+
 void PlayerCore::resynchronizeFromMpv()
 {
     if (!canAccessMpv()) {
+        return;
+    }
+    if (m_mpv->getFlag(QStringLiteral("idle-active"))) {
+        resetTransientPlaybackInfo();
+        setState(PlayerState::Idle);
         return;
     }
 
@@ -514,13 +720,48 @@ void PlayerCore::resynchronizeFromMpv()
         m_mpv->getFlag(QStringLiteral("mute"));
     m_info.playSpeed =
         m_mpv->getDouble(QStringLiteral("speed"));
+    const QString videoTrack =
+        m_mpv->getString(QStringLiteral("vid"));
+    const QString audioTrack =
+        m_mpv->getString(QStringLiteral("aid"));
+    m_info.hasVideo =
+        !videoTrack.isEmpty() && videoTrack != QStringLiteral("no");
+    m_info.hasAudio =
+        !audioTrack.isEmpty() && audioTrack != QStringLiteral("no");
+    m_info.isNetworkResource =
+        m_mpv->getFlag(QStringLiteral("demuxer-via-network"));
+    m_info.isSeeking =
+        m_mpv->getFlag(QStringLiteral("seeking"));
+    m_isSeeking = m_info.isSeeking;
+    setEofReached(
+        m_mpv->getFlag(QStringLiteral("eof-reached")));
+
+    BufferingInfo buffering = m_info.buffering;
+    buffering.active =
+        m_mpv->getFlag(QStringLiteral("paused-for-cache"));
+    if (m_info.isNetworkResource) {
+        buffering.percent = std::clamp(
+            static_cast<int>(m_mpv->getInt(
+                QStringLiteral("cache-buffering-state"))),
+            0, 100);
+        buffering.cacheSpeedBytesPerSecond =
+            std::max<qint64>(
+                0, m_mpv->getInt(QStringLiteral("cache-speed")));
+        buffering.cacheDurationSec = std::max(
+            0.0, m_mpv->getDouble(
+                     QStringLiteral("demuxer-cache-duration")));
+        buffering.cacheIdle =
+            m_mpv->getFlag(QStringLiteral("demuxer-cache-idle"));
+    }
+    setBufferingInfo(buffering);
     emit positionChanged(m_info.videoPositionSec);
     emit durationChanged(m_info.videoDurationSec);
-    updateVideoSize();
+    emit seekingChanged(m_info.isSeeking);
+    if (m_info.hasVideo) {
+        updateVideoSize();
+    }
 
-    if (m_mpv->getFlag(QStringLiteral("idle-active"))) {
-        setState(PlayerState::Idle);
-    } else if (isLoaded(m_info.state)) {
+    if (isLoaded(m_info.state)) {
         setState(
             m_mpv->getFlag(QStringLiteral("pause"))
                 ? PlayerState::Paused
