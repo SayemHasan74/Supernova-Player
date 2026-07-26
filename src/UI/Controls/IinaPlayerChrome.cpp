@@ -13,15 +13,24 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QPropertyAnimation>
+#include <QSignalBlocker>
 #include <QSlider>
 #include <QStyleOption>
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <limits>
 
 namespace {
 using namespace Supernova::Ui;
+
+constexpr std::array<double, 11> speedSteps{
+    0.03125, 0.0625, 0.125, 0.25, 0.5,
+    1.0,
+    2.0, 4.0, 8.0, 16.0, 32.0};
+constexpr int normalSpeedIndex = 5;
 
 QPainterPath iconPath(IinaIcon icon, const QRectF &bounds)
 {
@@ -64,7 +73,10 @@ QPainterPath iconPath(IinaIcon icon, const QRectF &bounds)
             center.x() + 3.9 * unit, center.y() - 5.2 * unit,
             1.5 * unit, 10.4 * unit));
         break;
-    case IinaIcon::Volume:
+    case IinaIcon::VolumeOff:
+    case IinaIcon::VolumeLow:
+    case IinaIcon::VolumeMedium:
+    case IinaIcon::VolumeHigh:
     case IinaIcon::Muted:
         path.moveTo(center.x() - 6.0 * unit, center.y() - 2.3 * unit);
         path.lineTo(center.x() - 3.0 * unit, center.y() - 2.3 * unit);
@@ -78,6 +90,23 @@ QPainterPath iconPath(IinaIcon icon, const QRectF &bounds)
             path.lineTo(center.x() + 7.0 * unit, center.y() + 3.2 * unit);
             path.moveTo(center.x() + 7.0 * unit, center.y() - 3.2 * unit);
             path.lineTo(center.x() + 3.2 * unit, center.y() + 3.2 * unit);
+        } else {
+            const int waveCount =
+                icon == IinaIcon::VolumeHigh ? 3
+                : icon == IinaIcon::VolumeMedium ? 2
+                : icon == IinaIcon::VolumeLow ? 1
+                                             : 0;
+            for (int wave = 0; wave < waveCount; ++wave) {
+                const qreal radius = (2.4 + wave * 1.9) * unit;
+                path.moveTo(
+                    center.x() + 2.4 * unit,
+                    center.y() - radius * 0.62);
+                path.cubicTo(
+                    center.x() + radius, center.y() - radius * 0.46,
+                    center.x() + radius, center.y() + radius * 0.46,
+                    center.x() + 2.4 * unit,
+                    center.y() + radius * 0.62);
+            }
         }
         break;
     case IinaIcon::FullScreen:
@@ -133,11 +162,23 @@ void IinaIconButton::setIconType(IinaIcon icon)
     update();
 }
 
+void IinaIconButton::setBadgeText(const QString &text)
+{
+    if (m_badgeText == text) {
+        return;
+    }
+    m_badgeText = text;
+    update();
+}
+
 void IinaIconButton::paintEvent(QPaintEvent *event)
 {
     Q_UNUSED(event)
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
+    if (!isEnabled()) {
+        painter.setOpacity(0.36);
+    }
 
     if (isDown()) {
         painter.setBrush(controlPressed);
@@ -149,7 +190,18 @@ void IinaIconButton::paintEvent(QPaintEvent *event)
         painter.drawEllipse(rect().adjusted(1, 1, -1, -1));
     }
 
-    QPainterPath path = iconPath(m_icon, rect().adjusted(4, 4, -4, -4));
+    if (!m_badgeText.isEmpty()) {
+        QFont badgeFont = font();
+        badgeFont.setPixelSize(9);
+        badgeFont.setWeight(QFont::DemiBold);
+        painter.setFont(badgeFont);
+        painter.setPen(primaryText);
+        painter.drawText(rect(), Qt::AlignCenter, m_badgeText);
+        return;
+    }
+
+    QPainterPath path =
+        iconPath(m_icon, rect().adjusted(4, 4, -4, -4));
     QPen pen(primaryText, 1.55, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
     painter.setPen(pen);
     painter.setBrush(primaryText);
@@ -268,7 +320,7 @@ IinaPlayerChrome::IinaPlayerChrome(
     controls->setContentsMargins(3, 0, 3, 0);
     controls->setSpacing(4);
 
-    m_muteButton = new IinaIconButton(IinaIcon::Volume, this);
+    m_muteButton = new IinaIconButton(IinaIcon::VolumeHigh, this);
     m_muteButton->setObjectName(QStringLiteral("muteButton"));
     m_muteButton->setFixedSize(compactButtonExtent, compactButtonExtent);
     m_muteButton->setToolTip(tr("Mute"));
@@ -292,11 +344,13 @@ IinaPlayerChrome::IinaPlayerChrome(
     controls->addWidget(m_volumeSlider);
     controls->addStretch(1);
 
-    auto *previous = new IinaIconButton(IinaIcon::Previous, this);
-    previous->setObjectName(QStringLiteral("previousButton"));
-    previous->setFixedSize(compactButtonExtent, compactButtonExtent);
-    previous->setToolTip(tr("Previous"));
-    controls->addWidget(previous);
+    m_previousButton =
+        new IinaIconButton(IinaIcon::Previous, this);
+    m_previousButton->setObjectName(QStringLiteral("previousButton"));
+    m_previousButton->setFixedSize(
+        compactButtonExtent, compactButtonExtent);
+    m_previousButton->setToolTip(tr("Slower"));
+    controls->addWidget(m_previousButton);
 
     m_playButton = new IinaIconButton(IinaIcon::Play, this);
     m_playButton->setObjectName(QStringLiteral("playPauseButton"));
@@ -306,11 +360,12 @@ IinaPlayerChrome::IinaPlayerChrome(
     controls->addWidget(m_playButton);
     controls->addSpacing(18);
 
-    auto *next = new IinaIconButton(IinaIcon::Next, this);
-    next->setObjectName(QStringLiteral("nextButton"));
-    next->setFixedSize(compactButtonExtent, compactButtonExtent);
-    next->setToolTip(tr("Next"));
-    controls->addWidget(next);
+    m_nextButton = new IinaIconButton(IinaIcon::Next, this);
+    m_nextButton->setObjectName(QStringLiteral("nextButton"));
+    m_nextButton->setFixedSize(
+        compactButtonExtent, compactButtonExtent);
+    m_nextButton->setToolTip(tr("Faster"));
+    controls->addWidget(m_nextButton);
     controls->addStretch(1);
 
     m_fullScreenButton =
@@ -339,7 +394,13 @@ IinaPlayerChrome::IinaPlayerChrome(
     outer->addLayout(timelineRow);
 
     connect(m_playButton, &QAbstractButton::clicked,
-            m_playerCore, &PlayerCore::togglePause);
+            this, [this] {
+                if (m_playerCore->info().state == PlayerState::Paused) {
+                    m_playerCore->resume();
+                } else if (isLoaded(m_playerCore->info().state)) {
+                    m_playerCore->pause();
+                }
+            });
     connect(m_muteButton, &QAbstractButton::clicked,
             m_playerCore, &PlayerCore::toggleMute);
     connect(m_volumeSlider, &QSlider::valueChanged,
@@ -349,20 +410,20 @@ IinaPlayerChrome::IinaPlayerChrome(
             });
     connect(m_fullScreenButton, &QAbstractButton::clicked,
             this, &IinaPlayerChrome::fullScreenRequested);
-    connect(previous, &QAbstractButton::clicked,
+    connect(m_previousButton, &QAbstractButton::pressed,
             this, [this] {
-                m_playerCore->mpvCore()->command(
-                    {QStringLiteral("playlist-prev"),
-                     QStringLiteral("force")});
-                emit activity();
+                m_speedPressTimer.restart();
+                activateSpeedStep(-1);
             });
-    connect(next, &QAbstractButton::clicked,
+    connect(m_previousButton, &QAbstractButton::released,
+            this, [this] { finishSpeedStep(-1); });
+    connect(m_nextButton, &QAbstractButton::pressed,
             this, [this] {
-                m_playerCore->mpvCore()->command(
-                    {QStringLiteral("playlist-next"),
-                     QStringLiteral("force")});
-                emit activity();
+                m_speedPressTimer.restart();
+                activateSpeedStep(1);
             });
+    connect(m_nextButton, &QAbstractButton::released,
+            this, [this] { finishSpeedStep(1); });
     connect(m_playButton, &QAbstractButton::clicked,
             this, &IinaPlayerChrome::activity);
     connect(m_muteButton, &QAbstractButton::clicked,
@@ -376,7 +437,17 @@ IinaPlayerChrome::IinaPlayerChrome(
     connect(m_timeline, &IinaTimeline::interaction,
             this, &IinaPlayerChrome::activity);
     connect(m_playerCore, &PlayerCore::stateChanged,
-            this, [this](PlayerState) { updatePlaybackState(); });
+            this, [this](PlayerState state) {
+                if (state == PlayerState::Paused && m_speedStepping) {
+                    m_speedStepping = false;
+                    m_playerCore->setSpeed(1.0);
+                }
+                updatePlaybackState();
+            });
+    connect(m_playerCore, &PlayerCore::mediaLoaded,
+            this, [this] { updatePlaybackState(); });
+    connect(m_playerCore, &PlayerCore::playbackStopped,
+            this, [this] { updatePlaybackState(); });
     connect(m_playerCore, &PlayerCore::positionChanged,
             this, [this](double position) {
                 m_position = position;
@@ -392,22 +463,29 @@ IinaPlayerChrome::IinaPlayerChrome(
     connect(m_playerCore->mpvCore(), &MpvCore::propertyChanged,
             this, [this](const QString &name, const QVariant &value) {
                 if (name == QStringLiteral("mute")) {
-                    m_muteButton->setIconType(
-                        value.toBool() ? IinaIcon::Muted
-                                       : IinaIcon::Volume);
-                    m_muteButton->setToolTip(
-                        value.toBool() ? tr("Unmute") : tr("Mute"));
+                    m_muted = value.toBool();
+                    updateVolumeControls(m_volume, m_muted);
                 } else if (name == QStringLiteral("volume")
                            && !m_volumeSlider->isSliderDown()) {
+                    m_volume = value.toDouble();
                     const QSignalBlocker blocker(m_volumeSlider);
-                    m_volumeSlider->setValue(qRound(value.toDouble()));
+                    m_volumeSlider->setValue(qRound(m_volume));
+                    updateVolumeControls(m_volume, m_muted);
+                } else if (name == QStringLiteral("speed")) {
+                    m_speed = value.toDouble();
+                    updateSpeedControls(m_speed);
                 }
             });
 
     m_position = m_playerCore->info().videoPositionSec;
     m_duration = m_playerCore->info().videoDurationSec;
+    m_speed = m_playerCore->info().playSpeed;
+    m_volume = m_playerCore->info().volume;
+    m_muted = m_playerCore->info().isMuted;
     m_timeline->setPlayback(m_position, m_duration);
     updateTimeLabels();
+    updateSpeedControls(m_speed);
+    updateVolumeControls(m_volume, m_muted);
     updatePlaybackState();
 
     const auto interactiveChildren = findChildren<QWidget *>();
@@ -494,7 +572,8 @@ bool IinaPlayerChrome::eventFilter(QObject *watched, QEvent *event)
         }
     }
     if (event->type() == QEvent::MouseMove
-        || event->type() == QEvent::Enter) {
+        || event->type() == QEvent::Enter
+        || event->type() == QEvent::Wheel) {
         emit activity();
     }
     return QWidget::eventFilter(watched, event);
@@ -538,11 +617,122 @@ void IinaPlayerChrome::paintEvent(QPaintEvent *event)
 
 void IinaPlayerChrome::updatePlaybackState()
 {
+    const bool loaded = isLoaded(m_playerCore->info().state);
     const bool playing =
         m_playerCore->info().state == PlayerState::Playing;
     m_playButton->setIconType(
         playing ? IinaIcon::Pause : IinaIcon::Play);
     m_playButton->setToolTip(playing ? tr("Pause") : tr("Play"));
+    m_playButton->setEnabled(loaded);
+    m_previousButton->setEnabled(loaded);
+    m_nextButton->setEnabled(loaded);
+    m_timeline->setEnabled(loaded);
+
+    const bool hasAudio =
+        loaded && m_playerCore->info().hasAudio;
+    m_muteButton->setVisible(hasAudio);
+    m_volumeSlider->setVisible(hasAudio);
+}
+
+void IinaPlayerChrome::updateSpeedControls(double speed)
+{
+    const bool normal = std::abs(speed - 1.0) < 0.0001;
+    if (normal) {
+        m_previousButton->setBadgeText({});
+        m_nextButton->setBadgeText({});
+        m_previousButton->setToolTip(tr("Slower"));
+        m_nextButton->setToolTip(tr("Faster"));
+        m_speedStepping = false;
+        return;
+    }
+
+    const QString label = speed < 0.1
+        ? QString::number(speed, 'f', 3) + QStringLiteral("×")
+        : QString::number(speed, 'g', 3) + QStringLiteral("×");
+    if (speed < 1.0) {
+        m_previousButton->setBadgeText(label);
+        m_nextButton->setBadgeText({});
+    } else {
+        m_previousButton->setBadgeText({});
+        m_nextButton->setBadgeText(label);
+    }
+    m_previousButton->setToolTip(
+        tr("Slower (currently %1)").arg(label));
+    m_nextButton->setToolTip(
+        tr("Faster (currently %1)").arg(label));
+}
+
+void IinaPlayerChrome::updateVolumeControls(
+    double volume, bool muted)
+{
+    IinaIcon icon = IinaIcon::VolumeHigh;
+    if (muted) {
+        icon = IinaIcon::Muted;
+    } else if (volume <= 0.0) {
+        icon = IinaIcon::VolumeOff;
+    } else if (volume <= 33.0) {
+        icon = IinaIcon::VolumeLow;
+    } else if (volume <= 66.0) {
+        icon = IinaIcon::VolumeMedium;
+    }
+    m_muteButton->setIconType(icon);
+    m_muteButton->setToolTip(muted ? tr("Unmute") : tr("Mute"));
+}
+
+void IinaPlayerChrome::activateSpeedStep(int direction)
+{
+    if (!isLoaded(m_playerCore->info().state) || direction == 0) {
+        return;
+    }
+
+    int currentIndex = normalSpeedIndex;
+    double smallestDistance = std::numeric_limits<double>::max();
+    for (int index = 0;
+         index < static_cast<int>(speedSteps.size()); ++index) {
+        const double distance =
+            std::abs(speedSteps[static_cast<size_t>(index)] - m_speed);
+        if (distance < smallestDistance) {
+            smallestDistance = distance;
+            currentIndex = index;
+        }
+    }
+    if (direction < 0 && currentIndex > normalSpeedIndex) {
+        currentIndex = normalSpeedIndex;
+    } else if (direction > 0 && currentIndex < normalSpeedIndex) {
+        currentIndex = normalSpeedIndex;
+    }
+    currentIndex = std::clamp(
+        currentIndex + (direction < 0 ? -1 : 1),
+        0, static_cast<int>(speedSteps.size()) - 1);
+    m_speed = speedSteps[static_cast<size_t>(currentIndex)];
+    m_speedStepping = true;
+    updateSpeedControls(m_speed);
+    m_playerCore->setSpeed(m_speed);
+    if (m_playerCore->info().state == PlayerState::Paused) {
+        m_playerCore->resume();
+    }
+    emit activity();
+}
+
+void IinaPlayerChrome::finishSpeedStep(int direction)
+{
+    constexpr qint64 minimumPressDurationMs = 500;
+    if (!m_speedPressTimer.isValid()
+        || m_speedPressTimer.elapsed() < minimumPressDurationMs) {
+        return;
+    }
+
+    const double firstStep =
+        direction < 0
+            ? speedSteps[normalSpeedIndex - 1]
+            : speedSteps[normalSpeedIndex + 1];
+    if (std::abs(m_speed - firstStep) < 0.0001) {
+        m_speed = 1.0;
+        m_speedStepping = false;
+        updateSpeedControls(m_speed);
+        m_playerCore->setSpeed(m_speed);
+    }
+    emit activity();
 }
 
 void IinaPlayerChrome::updateTimeLabels()

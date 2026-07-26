@@ -446,8 +446,11 @@ void MainWindow::setupWindowChrome()
         Supernova::Ui::controlAutoHideMs);
     connect(m_chromeAutoHideTimer, &QTimer::timeout,
             m_playerChrome, [this] {
-                if (!m_progressMode) {
+                if (!m_progressMode && !m_playerChrome->underMouse()) {
                     m_playerChrome->conceal();
+                    m_videoSurface->setCursor(Qt::BlankCursor);
+                } else if (!m_progressMode) {
+                    revealPlayerChrome();
                 }
             });
 
@@ -841,6 +844,7 @@ void MainWindow::revealPlayerChrome(bool animated)
         return;
     }
     m_playerChrome->reveal(animated);
+    m_videoSurface->unsetCursor();
     m_chromeAutoHideTimer->start();
 }
 
