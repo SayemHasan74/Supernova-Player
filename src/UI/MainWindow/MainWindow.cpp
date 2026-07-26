@@ -576,6 +576,11 @@ void MainWindow::setupWindowChrome()
         "QMenu::item:selected { background: rgb(55,95,155); }"
         "QMenu::separator { height: 1px; background: rgb(68,68,72);"
         " margin: 5px 8px; }"));
+    // Supernova uses IINA's player-window model: commands live in the
+    // playback context menu and OSC, not in a permanently docked desktop
+    // menu strip above the video.
+    menuBar()->setNativeMenuBar(false);
+    menuBar()->hide();
 
     applyDarkWindowFrame();
 
@@ -793,9 +798,25 @@ void MainWindow::setupMenus()
     m_playbackContextMenu->addSeparator();
     m_playbackContextMenu->addAction(
         m_commandActions.value(PlayerCommand::ToggleMute));
+    m_playbackContextMenu->addAction(
+        m_commandActions.value(PlayerCommand::TogglePlaylist));
     m_playbackContextMenu->addAction(m_fullScreenAction);
-
+    m_playbackContextMenu->addSeparator();
+    for (PlayerMenu menuType :
+         {PlayerMenu::File, PlayerMenu::Playback,
+          PlayerMenu::Video, PlayerMenu::Audio,
+          PlayerMenu::Window}) {
+        QMenu *submenu = menus.value(menuType);
+        if (!submenu) {
+            continue;
+        }
+        QString title = submenu->title();
+        title.remove(QLatin1Char('&'));
+        submenu->setTitle(title);
+        m_playbackContextMenu->addMenu(submenu);
+    }
     updateCommandStates();
+    menuBar()->hide();
 }
 
 void MainWindow::executeCommand(PlayerCommand command)
@@ -1322,7 +1343,7 @@ void MainWindow::restoreAfterMinimize()
 void MainWindow::syncFullScreenUi()
 {
     const bool fullScreen = isFullScreenMode();
-    menuBar()->setVisible(!fullScreen && !m_progressMode);
+    menuBar()->hide();
     if (m_fullScreenAction) {
         m_fullScreenAction->setChecked(fullScreen);
         m_fullScreenAction->setText(
@@ -1381,11 +1402,10 @@ void MainWindow::positionPlayerChrome()
     if (!m_playerChrome || !m_playbackPage || m_progressMode) {
         return;
     }
-    const int panelWidth =
-        m_playlistPanel && m_playlistPanel->isVisible()
-            ? m_playlistPanel->width() : 0;
+    // IINA sidebars overlay the content. Opening one must never recenter or
+    // resize the floating OSC; it remains anchored to the player window.
     const int availableWidth =
-        std::max(1, m_playbackPage->width() - panelWidth);
+        std::max(1, m_playbackPage->width());
     const int availableHeight = m_playbackPage->height();
     const int width = std::clamp(
         availableWidth - 2 * Supernova::Ui::floatingControlEdgeMargin,
