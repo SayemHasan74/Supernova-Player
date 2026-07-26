@@ -611,6 +611,8 @@ void MainWindow::setupWindowChrome()
             this, [this] { revealPlayerChrome(); });
     connect(m_playerChrome, &IinaPlayerChrome::fullScreenRequested,
             this, &MainWindow::toggleFullScreen);
+    connect(m_playerChrome, &IinaPlayerChrome::openFileRequested,
+            this, &MainWindow::openFiles);
     connect(m_playerChrome, &IinaPlayerChrome::playlistRequested,
             this, &MainWindow::togglePlaylist);
     connect(m_playerChrome, &IinaPlayerChrome::progressModeRequested,

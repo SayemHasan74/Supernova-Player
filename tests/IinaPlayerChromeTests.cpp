@@ -17,6 +17,7 @@ private slots:
     void timelineMapsPointerToMediaPercent();
     void timelineSeekDoesNotCreateOsdMessage();
     void middleClickPassesThroughChromeControls();
+    void openFileButtonRequestsFileDialog();
     void playlistButtonRequestsSidebar();
 };
 
@@ -43,6 +44,8 @@ void IinaPlayerChromeTests::exposesStableControlTopology()
         QStringLiteral("previousButton")));
     QVERIFY(chrome.findChild<IinaIconButton *>(
         QStringLiteral("nextButton")));
+    QVERIFY(chrome.findChild<IinaIconButton *>(
+        QStringLiteral("openFileButton")));
     QVERIFY(chrome.findChild<IinaIconButton *>(
         QStringLiteral("playlistButton")));
     QVERIFY(chrome.findChild<IinaIconButton *>(
@@ -81,6 +84,21 @@ void IinaPlayerChromeTests::middleClickPassesThroughChromeControls()
         &chrome, &IinaPlayerChrome::progressModeRequested);
 
     QTest::mouseClick(playButton, Qt::MiddleButton);
+
+    QCOMPARE(spy.count(), 1);
+}
+
+void IinaPlayerChromeTests::openFileButtonRequestsFileDialog()
+{
+    PlayerCore playerCore;
+    IinaPlayerChrome chrome(&playerCore);
+    auto *openFileButton = chrome.findChild<IinaIconButton *>(
+        QStringLiteral("openFileButton"));
+    QVERIFY(openFileButton);
+    QSignalSpy spy(
+        &chrome, &IinaPlayerChrome::openFileRequested);
+
+    QTest::mouseClick(openFileButton, Qt::LeftButton);
 
     QCOMPARE(spy.count(), 1);
 }

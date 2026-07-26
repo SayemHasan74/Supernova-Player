@@ -21,6 +21,7 @@ enum class IinaIcon {
     VolumeMedium,
     VolumeHigh,
     Muted,
+    Folder,
     Playlist,
     FullScreen,
     ExitFullScreen,
@@ -97,6 +98,7 @@ public:
 signals:
     void activity();
     void fullScreenRequested();
+    void openFileRequested();
     void playlistRequested();
     void progressModeRequested();
     void previewRequested(double seconds, const QPoint &globalAnchor);
@@ -122,6 +124,7 @@ private:
     IinaIconButton *m_muteButton = nullptr;
     IinaIconButton *m_previousButton = nullptr;
     IinaIconButton *m_nextButton = nullptr;
+    IinaIconButton *m_openFileButton = nullptr;
     IinaIconButton *m_playlistButton = nullptr;
     IinaIconButton *m_fullScreenButton = nullptr;
     QSlider *m_volumeSlider = nullptr;

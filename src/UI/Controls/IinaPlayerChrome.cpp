@@ -101,6 +101,27 @@ QPainterPath iconPath(IinaIcon icon, const QRectF &bounds)
             }
         }
         break;
+    case IinaIcon::Folder:
+        path.moveTo(
+            center.x() - 6.2 * unit,
+            center.y() - 4.5 * unit);
+        path.lineTo(
+            center.x() - 1.9 * unit,
+            center.y() - 4.5 * unit);
+        path.lineTo(
+            center.x() - 0.1 * unit,
+            center.y() - 2.6 * unit);
+        path.lineTo(
+            center.x() + 6.2 * unit,
+            center.y() - 2.6 * unit);
+        path.lineTo(
+            center.x() + 6.2 * unit,
+            center.y() + 4.8 * unit);
+        path.lineTo(
+            center.x() - 6.2 * unit,
+            center.y() + 4.8 * unit);
+        path.closeSubpath();
+        break;
     case IinaIcon::Playlist:
         for (int row = -1; row <= 1; ++row) {
             const qreal y = center.y() + row * 4.0 * unit;
@@ -440,6 +461,15 @@ IinaPlayerChrome::IinaPlayerChrome(
     controls->addWidget(m_nextButton);
     controls->addStretch(1);
 
+    m_openFileButton =
+        new IinaIconButton(IinaIcon::Folder, this);
+    m_openFileButton->setObjectName(
+        QStringLiteral("openFileButton"));
+    m_openFileButton->setFixedSize(
+        compactButtonExtent, compactButtonExtent);
+    m_openFileButton->setToolTip(tr("Open File"));
+    controls->addWidget(m_openFileButton);
+
     m_playlistButton =
         new IinaIconButton(IinaIcon::Playlist, this);
     m_playlistButton->setObjectName(
@@ -507,6 +537,8 @@ IinaPlayerChrome::IinaPlayerChrome(
             });
     connect(m_fullScreenButton, &QAbstractButton::clicked,
             this, &IinaPlayerChrome::fullScreenRequested);
+    connect(m_openFileButton, &QAbstractButton::clicked,
+            this, &IinaPlayerChrome::openFileRequested);
     connect(m_playlistButton, &QAbstractButton::clicked,
             this, &IinaPlayerChrome::playlistRequested);
     connect(m_previousButton, &QAbstractButton::clicked,
@@ -524,6 +556,8 @@ IinaPlayerChrome::IinaPlayerChrome(
     connect(m_muteButton, &QAbstractButton::clicked,
             this, &IinaPlayerChrome::activity);
     connect(m_fullScreenButton, &QAbstractButton::clicked,
+            this, &IinaPlayerChrome::activity);
+    connect(m_openFileButton, &QAbstractButton::clicked,
             this, &IinaPlayerChrome::activity);
     connect(m_playlistButton, &QAbstractButton::clicked,
             this, &IinaPlayerChrome::activity);
@@ -742,6 +776,7 @@ void IinaPlayerChrome::updatePlaybackState()
     m_playButton->setEnabled(loaded);
     m_previousButton->setEnabled(loaded);
     m_nextButton->setEnabled(loaded);
+    m_openFileButton->setEnabled(true);
     m_playlistButton->setEnabled(true);
     m_timeline->setEnabled(loaded);
     m_muteButton->setVisible(true);
