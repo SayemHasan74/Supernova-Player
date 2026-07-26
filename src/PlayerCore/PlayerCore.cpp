@@ -244,6 +244,43 @@ void PlayerCore::stop()
     m_mpv->command({QStringLiteral("stop")});
 }
 
+void PlayerCore::navigateInPlaylist(bool nextMedia)
+{
+    if (!isLoaded(m_info.state)) {
+        return;
+    }
+
+    const qint64 playlistCount =
+        m_mpv->getInt(QStringLiteral("playlist-count"));
+    const qint64 playlistPosition =
+        m_mpv->getInt(QStringLiteral("playlist-pos"));
+    if (playlistCount <= 1) {
+        if (!nextMedia) {
+            seekAbsolute(0.0);
+        }
+        return;
+    }
+    if (!nextMedia && playlistPosition <= 0) {
+        seekAbsolute(0.0);
+        return;
+    }
+    if (nextMedia && playlistPosition >= playlistCount - 1) {
+        return;
+    }
+
+    // Match the manual-open lifecycle: pause before switching so audio cannot
+    // run ahead of a slow video decoder, then resume only when the replacement
+    // has loaded and its video surface is ready.
+    if (!m_mpv->getFlag(QStringLiteral("pause"))) {
+        m_mpv->setFlag(QStringLiteral("pause"), true);
+    }
+    m_info.justOpenedFile = true;
+    setState(PlayerState::Loading);
+    m_mpv->command(
+        {nextMedia ? QStringLiteral("playlist-next")
+                   : QStringLiteral("playlist-prev")});
+}
+
 void PlayerCore::seekPercent(double percent, bool forceExact)
 {
     if (!isLoaded(m_info.state)) {

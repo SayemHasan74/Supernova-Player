@@ -1,8 +1,6 @@
 #pragma once
 
 #include <QAbstractButton>
-#include <QElapsedTimer>
-#include <QString>
 #include <QWidget>
 
 class QLabel;
@@ -32,14 +30,12 @@ public:
         IinaIcon icon, QWidget *parent = nullptr);
 
     void setIconType(IinaIcon icon);
-    void setBadgeText(const QString &text);
 
 protected:
     void paintEvent(QPaintEvent *event) override;
 
 private:
     IinaIcon m_icon;
-    QString m_badgeText;
 };
 
 class IinaTimeline final : public QWidget {
@@ -94,11 +90,8 @@ protected:
 
 private:
     void updatePlaybackState();
-    void updateSpeedControls(double speed);
     void updateTimeLabels();
     void updateVolumeControls(double volume, bool muted);
-    void activateSpeedStep(int direction);
-    void finishSpeedStep(int direction);
     static QString formatTime(double seconds);
 
     PlayerCore *m_playerCore = nullptr;
@@ -114,10 +107,7 @@ private:
     QPropertyAnimation *m_opacityAnimation = nullptr;
     double m_position = 0.0;
     double m_duration = 0.0;
-    double m_speed = 1.0;
     double m_volume = 100.0;
     bool m_muted = false;
-    bool m_speedStepping = false;
-    QElapsedTimer m_speedPressTimer;
     bool m_concealed = false;
 };

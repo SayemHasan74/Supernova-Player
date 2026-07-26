@@ -33,6 +33,7 @@ public:
     void pause();
     void resume();
     void stop();
+    void navigateInPlaylist(bool nextMedia);
 
     void seekPercent(double percent, bool forceExact = false);
     void seekRelative(double seconds, bool exact = false);

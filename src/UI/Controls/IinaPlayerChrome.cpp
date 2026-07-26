@@ -19,18 +19,10 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
-#include <array>
 #include <cmath>
-#include <limits>
 
 namespace {
 using namespace Supernova::Ui;
-
-constexpr std::array<double, 11> speedSteps{
-    0.03125, 0.0625, 0.125, 0.25, 0.5,
-    1.0,
-    2.0, 4.0, 8.0, 16.0, 32.0};
-constexpr int normalSpeedIndex = 5;
 
 QPainterPath iconPath(IinaIcon icon, const QRectF &bounds)
 {
@@ -162,15 +154,6 @@ void IinaIconButton::setIconType(IinaIcon icon)
     update();
 }
 
-void IinaIconButton::setBadgeText(const QString &text)
-{
-    if (m_badgeText == text) {
-        return;
-    }
-    m_badgeText = text;
-    update();
-}
-
 void IinaIconButton::paintEvent(QPaintEvent *event)
 {
     Q_UNUSED(event)
@@ -188,16 +171,6 @@ void IinaIconButton::paintEvent(QPaintEvent *event)
         painter.setBrush(controlHover);
         painter.setPen(Qt::NoPen);
         painter.drawEllipse(rect().adjusted(1, 1, -1, -1));
-    }
-
-    if (!m_badgeText.isEmpty()) {
-        QFont badgeFont = font();
-        badgeFont.setPixelSize(9);
-        badgeFont.setWeight(QFont::DemiBold);
-        painter.setFont(badgeFont);
-        painter.setPen(primaryText);
-        painter.drawText(rect(), Qt::AlignCenter, m_badgeText);
-        return;
     }
 
     QPainterPath path =
@@ -349,7 +322,7 @@ IinaPlayerChrome::IinaPlayerChrome(
     m_previousButton->setObjectName(QStringLiteral("previousButton"));
     m_previousButton->setFixedSize(
         compactButtonExtent, compactButtonExtent);
-    m_previousButton->setToolTip(tr("Slower"));
+    m_previousButton->setToolTip(tr("Previous Media"));
     controls->addWidget(m_previousButton);
 
     m_playButton = new IinaIconButton(IinaIcon::Play, this);
@@ -364,7 +337,7 @@ IinaPlayerChrome::IinaPlayerChrome(
     m_nextButton->setObjectName(QStringLiteral("nextButton"));
     m_nextButton->setFixedSize(
         compactButtonExtent, compactButtonExtent);
-    m_nextButton->setToolTip(tr("Faster"));
+    m_nextButton->setToolTip(tr("Next Media"));
     controls->addWidget(m_nextButton);
     controls->addStretch(1);
 
@@ -410,20 +383,16 @@ IinaPlayerChrome::IinaPlayerChrome(
             });
     connect(m_fullScreenButton, &QAbstractButton::clicked,
             this, &IinaPlayerChrome::fullScreenRequested);
-    connect(m_previousButton, &QAbstractButton::pressed,
-            this, [this] {
-                m_speedPressTimer.restart();
-                activateSpeedStep(-1);
+    connect(m_previousButton, &QAbstractButton::clicked,
+            m_playerCore, [this] {
+                m_playerCore->navigateInPlaylist(false);
+                emit activity();
             });
-    connect(m_previousButton, &QAbstractButton::released,
-            this, [this] { finishSpeedStep(-1); });
-    connect(m_nextButton, &QAbstractButton::pressed,
-            this, [this] {
-                m_speedPressTimer.restart();
-                activateSpeedStep(1);
+    connect(m_nextButton, &QAbstractButton::clicked,
+            m_playerCore, [this] {
+                m_playerCore->navigateInPlaylist(true);
+                emit activity();
             });
-    connect(m_nextButton, &QAbstractButton::released,
-            this, [this] { finishSpeedStep(1); });
     connect(m_playButton, &QAbstractButton::clicked,
             this, &IinaPlayerChrome::activity);
     connect(m_muteButton, &QAbstractButton::clicked,
@@ -437,11 +406,7 @@ IinaPlayerChrome::IinaPlayerChrome(
     connect(m_timeline, &IinaTimeline::interaction,
             this, &IinaPlayerChrome::activity);
     connect(m_playerCore, &PlayerCore::stateChanged,
-            this, [this](PlayerState state) {
-                if (state == PlayerState::Paused && m_speedStepping) {
-                    m_speedStepping = false;
-                    m_playerCore->setSpeed(1.0);
-                }
+            this, [this](PlayerState) {
                 updatePlaybackState();
             });
     connect(m_playerCore, &PlayerCore::mediaLoaded,
@@ -471,20 +436,15 @@ IinaPlayerChrome::IinaPlayerChrome(
                     const QSignalBlocker blocker(m_volumeSlider);
                     m_volumeSlider->setValue(qRound(m_volume));
                     updateVolumeControls(m_volume, m_muted);
-                } else if (name == QStringLiteral("speed")) {
-                    m_speed = value.toDouble();
-                    updateSpeedControls(m_speed);
                 }
             });
 
     m_position = m_playerCore->info().videoPositionSec;
     m_duration = m_playerCore->info().videoDurationSec;
-    m_speed = m_playerCore->info().playSpeed;
     m_volume = m_playerCore->info().volume;
     m_muted = m_playerCore->info().isMuted;
     m_timeline->setPlayback(m_position, m_duration);
     updateTimeLabels();
-    updateSpeedControls(m_speed);
     updateVolumeControls(m_volume, m_muted);
     updatePlaybackState();
 
@@ -627,39 +587,10 @@ void IinaPlayerChrome::updatePlaybackState()
     m_previousButton->setEnabled(loaded);
     m_nextButton->setEnabled(loaded);
     m_timeline->setEnabled(loaded);
-
-    const bool hasAudio =
-        loaded && m_playerCore->info().hasAudio;
-    m_muteButton->setVisible(hasAudio);
-    m_volumeSlider->setVisible(hasAudio);
-}
-
-void IinaPlayerChrome::updateSpeedControls(double speed)
-{
-    const bool normal = std::abs(speed - 1.0) < 0.0001;
-    if (normal) {
-        m_previousButton->setBadgeText({});
-        m_nextButton->setBadgeText({});
-        m_previousButton->setToolTip(tr("Slower"));
-        m_nextButton->setToolTip(tr("Faster"));
-        m_speedStepping = false;
-        return;
-    }
-
-    const QString label = speed < 0.1
-        ? QString::number(speed, 'f', 3) + QStringLiteral("×")
-        : QString::number(speed, 'g', 3) + QStringLiteral("×");
-    if (speed < 1.0) {
-        m_previousButton->setBadgeText(label);
-        m_nextButton->setBadgeText({});
-    } else {
-        m_previousButton->setBadgeText({});
-        m_nextButton->setBadgeText(label);
-    }
-    m_previousButton->setToolTip(
-        tr("Slower (currently %1)").arg(label));
-    m_nextButton->setToolTip(
-        tr("Faster (currently %1)").arg(label));
+    m_muteButton->setVisible(true);
+    m_volumeSlider->setVisible(true);
+    m_muteButton->setEnabled(loaded);
+    m_volumeSlider->setEnabled(loaded);
 }
 
 void IinaPlayerChrome::updateVolumeControls(
@@ -677,62 +608,6 @@ void IinaPlayerChrome::updateVolumeControls(
     }
     m_muteButton->setIconType(icon);
     m_muteButton->setToolTip(muted ? tr("Unmute") : tr("Mute"));
-}
-
-void IinaPlayerChrome::activateSpeedStep(int direction)
-{
-    if (!isLoaded(m_playerCore->info().state) || direction == 0) {
-        return;
-    }
-
-    int currentIndex = normalSpeedIndex;
-    double smallestDistance = std::numeric_limits<double>::max();
-    for (int index = 0;
-         index < static_cast<int>(speedSteps.size()); ++index) {
-        const double distance =
-            std::abs(speedSteps[static_cast<size_t>(index)] - m_speed);
-        if (distance < smallestDistance) {
-            smallestDistance = distance;
-            currentIndex = index;
-        }
-    }
-    if (direction < 0 && currentIndex > normalSpeedIndex) {
-        currentIndex = normalSpeedIndex;
-    } else if (direction > 0 && currentIndex < normalSpeedIndex) {
-        currentIndex = normalSpeedIndex;
-    }
-    currentIndex = std::clamp(
-        currentIndex + (direction < 0 ? -1 : 1),
-        0, static_cast<int>(speedSteps.size()) - 1);
-    m_speed = speedSteps[static_cast<size_t>(currentIndex)];
-    m_speedStepping = true;
-    updateSpeedControls(m_speed);
-    m_playerCore->setSpeed(m_speed);
-    if (m_playerCore->info().state == PlayerState::Paused) {
-        m_playerCore->resume();
-    }
-    emit activity();
-}
-
-void IinaPlayerChrome::finishSpeedStep(int direction)
-{
-    constexpr qint64 minimumPressDurationMs = 500;
-    if (!m_speedPressTimer.isValid()
-        || m_speedPressTimer.elapsed() < minimumPressDurationMs) {
-        return;
-    }
-
-    const double firstStep =
-        direction < 0
-            ? speedSteps[normalSpeedIndex - 1]
-            : speedSteps[normalSpeedIndex + 1];
-    if (std::abs(m_speed - firstStep) < 0.0001) {
-        m_speed = 1.0;
-        m_speedStepping = false;
-        updateSpeedControls(m_speed);
-        m_playerCore->setSpeed(m_speed);
-    }
-    emit activity();
 }
 
 void IinaPlayerChrome::updateTimeLabels()
