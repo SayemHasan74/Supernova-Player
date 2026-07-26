@@ -3,6 +3,8 @@
 #include "App/MediaSourceResolver.h"
 #include "Mpv/MpvVideoSurface.h"
 #include "PlayerCore/PlayerCore.h"
+#include "UI/Controls/IinaPlayerChrome.h"
+#include "UI/Design/DesignTokens.h"
 
 #include <QAction>
 #include <QCloseEvent>
@@ -25,6 +27,7 @@
 #include <QScreen>
 #include <QStackedLayout>
 #include <QTimer>
+#include <QVBoxLayout>
 #include <QWidget>
 
 #include <algorithm>
@@ -153,6 +156,8 @@ MainWindow::MainWindow(PlayerCore *playerCore, QWidget *parent)
                         ? tr("Playback Error — Supernova")
                         : tr("Fatal Playback Error — Supernova"));
             });
+    connect(m_playerCore, &PlayerCore::mediaLoaded,
+            this, [this] { revealPlayerChrome(false); });
 }
 
 MainWindow::~MainWindow()
@@ -322,6 +327,11 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
             return true;
         }
     }
+    if (watched == m_videoSurface
+        && (event->type() == QEvent::MouseMove
+            || event->type() == QEvent::Enter)) {
+        revealPlayerChrome();
+    }
     return QMainWindow::eventFilter(watched, event);
 }
 
@@ -352,6 +362,12 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
     handleKeyPress(event);
 }
 
+void MainWindow::resizeEvent(QResizeEvent *event)
+{
+    QMainWindow::resizeEvent(event);
+    positionPlayerChrome();
+}
+
 void MainWindow::handleKeyPress(QKeyEvent *event)
 {
     switch (event->key()) {
@@ -379,26 +395,74 @@ void MainWindow::setupWindowChrome()
     setWindowIcon(QIcon(QStringLiteral(":/icons/supernova.ico")));
     setMinimumSize(480, 270);
     setAcceptDrops(true);
+    menuBar()->setStyleSheet(QStringLiteral(
+        "QMenuBar { background: rgb(23,23,25); color: rgb(235,235,240);"
+        " border: 0; padding: 2px 5px; }"
+        "QMenuBar::item { background: transparent; padding: 4px 9px;"
+        " border-radius: 4px; }"
+        "QMenuBar::item:selected { background: rgba(255,255,255,28); }"
+        "QMenu { background: rgb(31,31,34); color: rgb(240,240,244);"
+        " border: 1px solid rgb(65,65,70); padding: 5px; }"
+        "QMenu::item { padding: 5px 28px 5px 22px; border-radius: 4px; }"
+        "QMenu::item:selected { background: rgb(55,95,155); }"
+        "QMenu::separator { height: 1px; background: rgb(68,68,72);"
+        " margin: 5px 8px; }"));
+
+    applyDarkWindowFrame();
 
     QWidget *contentRoot = new QWidget(this);
     m_contentLayout = new QStackedLayout(contentRoot);
     m_contentLayout->setContentsMargins(0, 0, 0, 0);
     m_contentLayout->setStackingMode(QStackedLayout::StackOne);
 
+    m_playbackPage = new QWidget(contentRoot);
+    auto *playbackLayout = new QVBoxLayout(m_playbackPage);
+    playbackLayout->setContentsMargins(0, 0, 0, 0);
+    playbackLayout->setSpacing(0);
+
     m_videoSurface =
-        new MpvVideoSurface(m_playerCore->mpvCore(), contentRoot);
+        new MpvVideoSurface(m_playerCore->mpvCore(), m_playbackPage);
     m_videoSurface->setAcceptDrops(false);
     m_videoSurface->setFocusPolicy(Qt::StrongFocus);
+    m_videoSurface->setMouseTracking(true);
     m_videoSurface->installEventFilter(this);
+    playbackLayout->addWidget(m_videoSurface);
     connect(m_videoSurface, &MpvVideoSurface::renderContextReady,
             this, &MainWindow::renderContextReady);
+
+    m_playerChrome =
+        new IinaPlayerChrome(m_playerCore, m_playbackPage);
+    m_playerChrome->raise();
+    connect(m_playerChrome, &IinaPlayerChrome::activity,
+            this, [this] { revealPlayerChrome(); });
+    connect(m_playerChrome, &IinaPlayerChrome::fullScreenRequested,
+            this, &MainWindow::toggleFullScreen);
+    connect(m_playerChrome, &IinaPlayerChrome::progressModeRequested,
+            this, &MainWindow::toggleProgressMode);
+
+    m_chromeAutoHideTimer = new QTimer(this);
+    m_chromeAutoHideTimer->setSingleShot(true);
+    m_chromeAutoHideTimer->setInterval(
+        Supernova::Ui::controlAutoHideMs);
+    connect(m_chromeAutoHideTimer, &QTimer::timeout,
+            m_playerChrome, [this] {
+                if (!m_progressMode) {
+                    m_playerChrome->conceal();
+                }
+            });
+
     m_progressBar = new ProgressOnlyBar(contentRoot);
     m_progressBar->installEventFilter(this);
-    m_contentLayout->addWidget(m_videoSurface);
+    m_contentLayout->addWidget(m_playbackPage);
     m_contentLayout->addWidget(m_progressBar);
-    m_contentLayout->setCurrentWidget(m_videoSurface);
+    m_contentLayout->setCurrentWidget(m_playbackPage);
     setCentralWidget(contentRoot);
     m_standardWindowFlags = windowFlags();
+    QTimer::singleShot(0, this, [this] {
+        applyDarkWindowFrame();
+        positionPlayerChrome();
+        revealPlayerChrome(false);
+    });
 }
 
 void MainWindow::setupMenus()
@@ -595,6 +659,7 @@ void MainWindow::finishEnteringProgressMode()
     // saved state above for an exact restore.
     showNormal();
     m_contentLayout->setCurrentWidget(m_progressBar);
+    m_chromeAutoHideTimer->stop();
     menuBar()->hide();
     setMinimumSize(240, progressHeight);
     setMaximumHeight(progressHeight);
@@ -625,7 +690,7 @@ void MainWindow::exitProgressMode()
     setWindowFlags(m_standardWindowFlags);
     setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
     setMinimumSize(480, 270);
-    m_contentLayout->setCurrentWidget(m_videoSurface);
+    m_contentLayout->setCurrentWidget(m_playbackPage);
     showNormal();
 
     if (restoreFullScreen) {
@@ -657,6 +722,7 @@ void MainWindow::exitProgressMode()
     m_videoSurface->setFocus(Qt::OtherFocusReason);
     m_videoSurface->setLiveResize(false);
     m_videoSurface->update();
+    revealPlayerChrome(false);
 }
 
 void MainWindow::exitFullScreen()
@@ -733,6 +799,76 @@ void MainWindow::syncFullScreenUi()
             fullScreen ? tr("Exit Full Screen")
                        : tr("Enter Full Screen"));
     }
+    if (m_playerChrome) {
+        m_playerChrome->setFullScreen(fullScreen);
+        positionPlayerChrome();
+        revealPlayerChrome(false);
+    }
+}
+
+void MainWindow::applyDarkWindowFrame()
+{
+#ifdef Q_OS_WIN
+    // Preserve the native non-client frame (and therefore the proven smooth
+    // drag/resize path), while matching IINA's default dark window material.
+    using SetDwmAttribute = HRESULT(WINAPI *)(HWND, DWORD, LPCVOID, DWORD);
+    const HWND handle = reinterpret_cast<HWND>(winId());
+    if (HMODULE dwm = LoadLibraryW(L"dwmapi.dll")) {
+        const auto setDwmAttribute = reinterpret_cast<SetDwmAttribute>(
+            GetProcAddress(dwm, "DwmSetWindowAttribute"));
+        if (setDwmAttribute) {
+            const BOOL enabled = TRUE;
+            constexpr DWORD modernDarkMode = 20;
+            constexpr DWORD legacyDarkMode = 19;
+            if (FAILED(setDwmAttribute(
+                    handle, modernDarkMode, &enabled, sizeof(enabled)))) {
+                setDwmAttribute(
+                    handle, legacyDarkMode, &enabled, sizeof(enabled));
+            }
+        }
+        FreeLibrary(dwm);
+    }
+    SetWindowPos(
+        handle, nullptr, 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER
+            | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+#endif
+}
+
+void MainWindow::revealPlayerChrome(bool animated)
+{
+    if (!m_playerChrome || m_progressMode) {
+        return;
+    }
+    m_playerChrome->reveal(animated);
+    m_chromeAutoHideTimer->start();
+}
+
+void MainWindow::positionPlayerChrome()
+{
+    if (!m_playerChrome || !m_playbackPage || m_progressMode) {
+        return;
+    }
+    const int availableWidth = m_playbackPage->width();
+    const int availableHeight = m_playbackPage->height();
+    const int width = std::clamp(
+        availableWidth - 2 * Supernova::Ui::floatingControlEdgeMargin,
+        Supernova::Ui::floatingControlMinWidth,
+        Supernova::Ui::floatingControlWidth);
+    const int x = (availableWidth - width) / 2;
+    const int distanceFromBottom = qRound(
+        availableHeight
+        * Supernova::Ui::floatingControlVerticalPosition);
+    const int y = std::clamp(
+        availableHeight - distanceFromBottom
+            - Supernova::Ui::floatingControlHeight,
+        0,
+        std::max(0, availableHeight
+            - Supernova::Ui::floatingControlHeight
+            - Supernova::Ui::floatingControlEdgeMargin));
+    m_playerChrome->setGeometry(
+        x, y, width, Supernova::Ui::floatingControlHeight);
+    m_playerChrome->raise();
 }
 
 void MainWindow::beginShutdown()
@@ -744,5 +880,9 @@ void MainWindow::beginShutdown()
         delete surface;
     }
     m_videoSurface = nullptr;
+    m_playbackPage = nullptr;
+    m_playerChrome = nullptr;
+    m_progressBar = nullptr;
+    m_contentLayout = nullptr;
     m_playerCore->shutdown();
 }

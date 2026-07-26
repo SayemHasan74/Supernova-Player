@@ -12,7 +12,10 @@ class QDragEnterEvent;
 class QDropEvent;
 class QEvent;
 class QKeyEvent;
+class QResizeEvent;
 class QStackedLayout;
+class QTimer;
+class IinaPlayerChrome;
 class MpvVideoSurface;
 class PlayerCore;
 class ProgressOnlyBar;
@@ -44,6 +47,7 @@ protected:
     void dropEvent(QDropEvent *event) override;
     bool eventFilter(QObject *watched, QEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
     bool nativeEvent(const QByteArray &eventType, void *message,
                      qintptr *result) override;
 
@@ -56,6 +60,7 @@ private:
     };
 
     void beginShutdown();
+    void applyDarkWindowFrame();
     void completeFullScreenTransition(bool fullScreen);
     void enterFullScreen();
     void enterProgressMode();
@@ -67,14 +72,19 @@ private:
     void openFolder();
     void requestOpen(const QList<QUrl> &urls);
     void restoreAfterMinimize();
+    void revealPlayerChrome(bool animated = true);
+    void positionPlayerChrome();
     void syncFullScreenUi();
     void setupMenus();
     void setupWindowChrome();
 
     PlayerCore *m_playerCore = nullptr;
     MpvVideoSurface *m_videoSurface = nullptr;
+    QWidget *m_playbackPage = nullptr;
+    IinaPlayerChrome *m_playerChrome = nullptr;
     ProgressOnlyBar *m_progressBar = nullptr;
     QStackedLayout *m_contentLayout = nullptr;
+    QTimer *m_chromeAutoHideTimer = nullptr;
     QAction *m_fullScreenAction = nullptr;
     QString m_lastOpenDirectory;
     QByteArray m_windowedGeometry;

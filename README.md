@@ -82,6 +82,17 @@ cmake --install build/release --prefix "$PWD/build/install"
 - End of file keeps loaded media restartable, clamps its displayed position
   to the duration, and seeks to zero when resumed. `Idle` is reserved for
   mpv's authoritative `idle-active` notification after media is unloaded.
+- The player chrome follows IINA's default floating OSC measurements: a
+  460-by-67 logical-pixel panel, positioned 10% above the video bottom edge,
+  with a 200-pixel compression floor for narrow windows.
+- Windowed and fullscreen modes reuse the same control widget and mpv surface.
+  Controls fade over 250 ms after 2.5 seconds of inactivity and immediately
+  return on pointer activity.
+- Visual values live in `UI/Design/DesignTokens.h`; controls paint from those
+  tokens instead of accumulating unrelated widget-specific colors and sizes.
+- Supernova retains the native Windows non-client frame for the proven smooth
+  drag/resize path while applying IINA's dark material to the client menu and
+  floating controls.
 
 ## Current playback controls
 

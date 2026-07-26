@@ -39,6 +39,9 @@ qt_add_executable(Supernova WIN32
     src/PlayerCore/PlaybackInfo.h
     src/PlayerCore/PlayerCore.h
     src/PlayerCore/PlayerCore.cpp
+    src/UI/Design/DesignTokens.h
+    src/UI/Controls/IinaPlayerChrome.h
+    src/UI/Controls/IinaPlayerChrome.cpp
     src/UI/MainWindow/MainWindow.h
     src/UI/MainWindow/MainWindow.cpp
     resources/app.rc
@@ -181,9 +184,49 @@ if(BUILD_TESTING)
         NAME PlayerCoreLifecycle
         COMMAND SupernovaPlayerCoreLifecycleTests)
 
+    qt_add_executable(SupernovaIinaPlayerChromeTests
+        tests/IinaPlayerChromeTests.cpp
+        src/Core/Logger.h
+        src/Core/Logger.cpp
+        src/Mpv/MpvCore.h
+        src/Mpv/MpvCore.cpp
+        src/Mpv/MpvEvent.h
+        src/PlayerCore/BufferingInfo.h
+        src/PlayerCore/PlaybackInfo.h
+        src/PlayerCore/PlayerCore.h
+        src/PlayerCore/PlayerCore.cpp
+        src/PlayerCore/PlayerState.h
+        src/UI/Design/DesignTokens.h
+        src/UI/Controls/IinaPlayerChrome.h
+        src/UI/Controls/IinaPlayerChrome.cpp
+    )
+    target_include_directories(
+        SupernovaIinaPlayerChromeTests PRIVATE src)
+    target_link_libraries(
+        SupernovaIinaPlayerChromeTests PRIVATE
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Widgets
+        Qt6::Test
+        Supernova::mpv)
+    set_target_properties(
+        SupernovaIinaPlayerChromeTests PROPERTIES
+        WIN32_EXECUTABLE FALSE)
+    add_custom_command(
+        TARGET SupernovaIinaPlayerChromeTests POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "${MPV_RUNTIME_DLL}"
+            "$<TARGET_FILE_DIR:SupernovaIinaPlayerChromeTests>"
+        VERBATIM
+    )
+    add_test(
+        NAME IinaPlayerChrome
+        COMMAND SupernovaIinaPlayerChromeTests)
+
     if(WIN32)
         set_tests_properties(
-            MediaSourceResolver MpvCore PlayerCoreLifecycle PROPERTIES
+            MediaSourceResolver MpvCore PlayerCoreLifecycle
+            IinaPlayerChrome PROPERTIES
             ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
     endif()
