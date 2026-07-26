@@ -42,6 +42,8 @@ qt_add_executable(Supernova WIN32
     src/UI/Design/DesignTokens.h
     src/UI/Controls/IinaPlayerChrome.h
     src/UI/Controls/IinaPlayerChrome.cpp
+    src/UI/Controls/PlaybackFeedback.h
+    src/UI/Controls/PlaybackFeedback.cpp
     src/UI/MainWindow/MainWindow.h
     src/UI/MainWindow/MainWindow.cpp
     resources/app.rc

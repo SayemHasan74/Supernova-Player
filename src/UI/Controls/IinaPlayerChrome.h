@@ -1,6 +1,9 @@
 #pragma once
 
+#include "PlayerCore/BufferingInfo.h"
+
 #include <QAbstractButton>
+#include <QPoint>
 #include <QWidget>
 
 class QLabel;
@@ -45,23 +48,37 @@ public:
     explicit IinaTimeline(QWidget *parent = nullptr);
 
     void setPlayback(double position, double duration);
+    void setBuffering(const BufferingInfo &buffering, bool networkResource);
+    void setSeeking(bool seeking);
 
 signals:
     void seekRequested(double percent);
+    void seekStarted();
+    void seekFinished(double percent);
+    void previewRequested(double seconds, const QPoint &globalAnchor);
+    void previewDismissed();
     void interaction();
 
 protected:
+    void leaveEvent(QEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
     void paintEvent(QPaintEvent *event) override;
 
 private:
-    void seekAt(double x);
+    [[nodiscard]] double ratioAt(double x) const noexcept;
+    void previewAt(double x);
+    double seekAt(double x);
 
     double m_position = 0.0;
     double m_duration = 0.0;
+    double m_cacheDuration = 0.0;
+    double m_previewRatio = 0.0;
     bool m_dragging = false;
+    bool m_hovering = false;
+    bool m_networkResource = false;
+    bool m_seeking = false;
 };
 
 class IinaPlayerChrome final : public QWidget {
@@ -80,6 +97,10 @@ signals:
     void activity();
     void fullScreenRequested();
     void progressModeRequested();
+    void previewRequested(double seconds, const QPoint &globalAnchor);
+    void previewDismissed();
+    void osdRequested(
+        const QString &title, const QString &detail, double progress);
 
 protected:
     void enterEvent(QEnterEvent *event) override;
@@ -110,4 +131,5 @@ private:
     double m_volume = 100.0;
     bool m_muted = false;
     bool m_concealed = false;
+    bool m_wasPausedBeforeTimelineDrag = false;
 };

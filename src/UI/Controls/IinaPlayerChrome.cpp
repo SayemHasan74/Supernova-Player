@@ -196,9 +196,38 @@ void IinaTimeline::setPlayback(double position, double duration)
     update();
 }
 
+void IinaTimeline::setBuffering(
+    const BufferingInfo &buffering, bool networkResource)
+{
+    m_cacheDuration = std::max(0.0, buffering.cacheDurationSec);
+    m_networkResource = networkResource;
+    update();
+}
+
+void IinaTimeline::setSeeking(bool seeking)
+{
+    if (m_seeking == seeking) {
+        return;
+    }
+    m_seeking = seeking;
+    update();
+}
+
+void IinaTimeline::leaveEvent(QEvent *event)
+{
+    m_hovering = false;
+    if (!m_dragging) {
+        emit previewDismissed();
+    }
+    update();
+    QWidget::leaveEvent(event);
+}
+
 void IinaTimeline::mouseMoveEvent(QMouseEvent *event)
 {
     emit interaction();
+    m_hovering = true;
+    previewAt(event->position().x());
     if (m_dragging) {
         seekAt(event->position().x());
     }
@@ -209,6 +238,8 @@ void IinaTimeline::mousePressEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton) {
         m_dragging = true;
+        emit seekStarted();
+        previewAt(event->position().x());
         seekAt(event->position().x());
         emit interaction();
         event->accept();
@@ -220,8 +251,13 @@ void IinaTimeline::mousePressEvent(QMouseEvent *event)
 void IinaTimeline::mouseReleaseEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton && m_dragging) {
+        const double percent = seekAt(event->position().x());
         m_dragging = false;
-        seekAt(event->position().x());
+        emit seekFinished(percent);
+        if (!rect().contains(event->position().toPoint())) {
+            m_hovering = false;
+            emit previewDismissed();
+        }
         emit interaction();
         event->accept();
         return;
@@ -243,6 +279,20 @@ void IinaTimeline::paintEvent(QPaintEvent *event)
     const double ratio = m_duration > 0.0
         ? std::clamp(m_position / m_duration, 0.0, 1.0)
         : 0.0;
+    const double cachedRatio =
+        m_networkResource && m_duration > 0.0
+        ? std::clamp(
+              (m_position + m_cacheDuration) / m_duration,
+              ratio, 1.0)
+        : ratio;
+    if (cachedRatio > ratio) {
+        QRectF cached = track;
+        cached.setLeft(track.left() + track.width() * ratio);
+        cached.setRight(
+            track.left() + track.width() * cachedRatio);
+        painter.setBrush(QColor(235, 235, 245, 112));
+        painter.drawRoundedRect(cached, 1.5, 1.5);
+    }
     QRectF played = track;
     played.setWidth(track.width() * ratio);
     painter.setBrush(sliderPlayed);
@@ -253,18 +303,57 @@ void IinaTimeline::paintEvent(QPaintEvent *event)
     painter.drawRoundedRect(
         QRectF(knobX - 1.5, height() / 2.0 - 7.5, 3.0, 15.0),
         1.0, 1.0);
+
+    if (m_hovering && m_duration > 0.0 && !m_dragging) {
+        const qreal previewX =
+            track.left() + track.width() * m_previewRatio;
+        painter.setBrush(QColor(255, 255, 255, 150));
+        painter.drawEllipse(QPointF(previewX, track.center().y()), 2.2, 2.2);
+    }
+
+    if (m_seeking) {
+        painter.setPen(QPen(QColor(255, 255, 255, 210), 1.0));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawEllipse(
+            QPointF(knobX, track.center().y()), 5.0, 5.0);
+    }
 }
 
-void IinaTimeline::seekAt(double x)
+double IinaTimeline::ratioAt(double x) const noexcept
 {
-    if (width() <= 1 || m_duration <= 0.0) {
+    if (width() <= 3) {
+        return 0.0;
+    }
+    return std::clamp(
+        (x - 1.5) / static_cast<double>(width() - 3),
+        0.0, 1.0);
+}
+
+void IinaTimeline::previewAt(double x)
+{
+    if (m_duration <= 0.0) {
+        emit previewDismissed();
         return;
     }
-    const double ratio =
-        std::clamp(x / static_cast<double>(width()), 0.0, 1.0);
+    m_previewRatio = ratioAt(x);
+    const int anchorX = qRound(
+        1.5 + m_previewRatio * static_cast<double>(width() - 3));
+    emit previewRequested(
+        m_duration * m_previewRatio,
+        mapToGlobal(QPoint(anchorX, 0)));
+    update();
+}
+
+double IinaTimeline::seekAt(double x)
+{
+    if (m_duration <= 0.0) {
+        return 0.0;
+    }
+    const double ratio = ratioAt(x);
     m_position = m_duration * ratio;
     update();
     emit seekRequested(ratio * 100.0);
+    return ratio * 100.0;
 }
 
 IinaPlayerChrome::IinaPlayerChrome(
@@ -370,15 +459,31 @@ IinaPlayerChrome::IinaPlayerChrome(
             this, [this] {
                 if (m_playerCore->info().state == PlayerState::Paused) {
                     m_playerCore->resume();
+                    emit osdRequested(
+                        tr("Play"), formatTime(m_position),
+                        m_duration > 0.0 ? m_position / m_duration : -1.0);
                 } else if (isLoaded(m_playerCore->info().state)) {
                     m_playerCore->pause();
+                    emit osdRequested(
+                        tr("Pause"), formatTime(m_position),
+                        m_duration > 0.0 ? m_position / m_duration : -1.0);
                 }
             });
     connect(m_muteButton, &QAbstractButton::clicked,
-            m_playerCore, &PlayerCore::toggleMute);
+            this, [this] {
+                m_playerCore->toggleMute();
+                emit osdRequested(
+                    m_muted ? tr("Sound On") : tr("Muted"),
+                    m_muted ? tr("Volume %1%").arg(qRound(m_volume))
+                            : QString(),
+                    m_muted ? m_volume / 100.0 : 0.0);
+            });
     connect(m_volumeSlider, &QSlider::valueChanged,
             m_playerCore, [this](int value) {
                 m_playerCore->setVolume(value);
+                emit osdRequested(
+                    tr("Volume %1%").arg(value), QString(),
+                    static_cast<double>(value) / 100.0);
                 emit activity();
             });
     connect(m_fullScreenButton, &QAbstractButton::clicked,
@@ -403,6 +508,28 @@ IinaPlayerChrome::IinaPlayerChrome(
             m_playerCore, [this](double percent) {
                 m_playerCore->seekPercent(percent, true);
             });
+    connect(m_timeline, &IinaTimeline::seekStarted,
+            this, [this] {
+                m_wasPausedBeforeTimelineDrag =
+                    m_playerCore->info().state == PlayerState::Paused;
+                m_playerCore->pause();
+            });
+    connect(m_timeline, &IinaTimeline::seekFinished,
+            this, [this](double percent) {
+                const double target =
+                    m_duration * std::clamp(percent / 100.0, 0.0, 1.0);
+                emit osdRequested(
+                    tr("Seek to %1").arg(formatTime(target)),
+                    formatTime(m_duration),
+                    std::clamp(percent / 100.0, 0.0, 1.0));
+                if (!m_wasPausedBeforeTimelineDrag) {
+                    m_playerCore->resume();
+                }
+            });
+    connect(m_timeline, &IinaTimeline::previewRequested,
+            this, &IinaPlayerChrome::previewRequested);
+    connect(m_timeline, &IinaTimeline::previewDismissed,
+            this, &IinaPlayerChrome::previewDismissed);
     connect(m_timeline, &IinaTimeline::interaction,
             this, &IinaPlayerChrome::activity);
     connect(m_playerCore, &PlayerCore::stateChanged,
@@ -425,6 +552,13 @@ IinaPlayerChrome::IinaPlayerChrome(
                 m_timeline->setPlayback(m_position, m_duration);
                 updateTimeLabels();
             });
+    connect(m_playerCore, &PlayerCore::bufferingChanged,
+            this, [this](const BufferingInfo &buffering) {
+                m_timeline->setBuffering(
+                    buffering, m_playerCore->info().isNetworkResource);
+            });
+    connect(m_playerCore, &PlayerCore::seekingChanged,
+            m_timeline, &IinaTimeline::setSeeking);
     connect(m_playerCore->mpvCore(), &MpvCore::propertyChanged,
             this, [this](const QString &name, const QVariant &value) {
                 if (name == QStringLiteral("mute")) {
@@ -444,6 +578,10 @@ IinaPlayerChrome::IinaPlayerChrome(
     m_volume = m_playerCore->info().volume;
     m_muted = m_playerCore->info().isMuted;
     m_timeline->setPlayback(m_position, m_duration);
+    m_timeline->setBuffering(
+        m_playerCore->info().buffering,
+        m_playerCore->info().isNetworkResource);
+    m_timeline->setSeeking(m_playerCore->info().isSeeking);
     updateTimeLabels();
     updateVolumeControls(m_volume, m_muted);
     updatePlaybackState();

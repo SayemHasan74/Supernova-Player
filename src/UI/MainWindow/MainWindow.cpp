@@ -4,6 +4,7 @@
 #include "Mpv/MpvVideoSurface.h"
 #include "PlayerCore/PlayerCore.h"
 #include "UI/Controls/IinaPlayerChrome.h"
+#include "UI/Controls/PlaybackFeedback.h"
 #include "UI/Design/DesignTokens.h"
 
 #include <QAction>
@@ -366,20 +367,47 @@ void MainWindow::resizeEvent(QResizeEvent *event)
 {
     QMainWindow::resizeEvent(event);
     positionPlayerChrome();
+    positionPlaybackFeedback();
 }
 
 void MainWindow::handleKeyPress(QKeyEvent *event)
 {
     switch (event->key()) {
     case Qt::Key_Space:
+        showPlaybackOsd(
+            m_playerCore->info().state == PlayerState::Paused
+                ? tr("Play") : tr("Pause"),
+            QString(),
+            m_playerCore->info().videoDurationSec > 0.0
+                ? m_playerCore->info().videoPositionSec
+                    / m_playerCore->info().videoDurationSec
+                : -1.0);
         m_playerCore->togglePause();
         event->accept();
         return;
     case Qt::Key_Left:
+        showPlaybackOsd(
+            tr("Seek Backward 5 Seconds"),
+            QString(),
+            m_playerCore->info().videoDurationSec > 0.0
+                ? std::clamp(
+                    (m_playerCore->info().videoPositionSec - 5.0)
+                        / m_playerCore->info().videoDurationSec,
+                    0.0, 1.0)
+                : -1.0);
         m_playerCore->seekRelative(-5.0, true);
         event->accept();
         return;
     case Qt::Key_Right:
+        showPlaybackOsd(
+            tr("Seek Forward 5 Seconds"),
+            QString(),
+            m_playerCore->info().videoDurationSec > 0.0
+                ? std::clamp(
+                    (m_playerCore->info().videoPositionSec + 5.0)
+                        / m_playerCore->info().videoDurationSec,
+                    0.0, 1.0)
+                : -1.0);
         m_playerCore->seekRelative(5.0, true);
         event->accept();
         return;
@@ -439,6 +467,35 @@ void MainWindow::setupWindowChrome()
             this, &MainWindow::toggleFullScreen);
     connect(m_playerChrome, &IinaPlayerChrome::progressModeRequested,
             this, &MainWindow::toggleProgressMode);
+    connect(m_playerChrome, &IinaPlayerChrome::osdRequested,
+            this, &MainWindow::showPlaybackOsd);
+
+    m_playbackOsd = new PlaybackOsd(m_playbackPage);
+    m_timelinePreview = new TimelinePreview(m_playbackPage);
+    m_bufferingIndicator =
+        new BufferingIndicator(m_playbackPage);
+    connect(
+        m_playerChrome, &IinaPlayerChrome::previewRequested,
+        this, [this](double seconds, const QPoint &globalAnchor) {
+            const QPoint anchor =
+                m_playbackPage->mapFromGlobal(globalAnchor);
+            m_timelinePreview->showTime(
+                seconds, anchor, m_playerChrome->y());
+        });
+    connect(m_playerChrome, &IinaPlayerChrome::previewDismissed,
+            m_timelinePreview, &TimelinePreview::dismiss);
+    connect(
+        m_playerCore, &PlayerCore::bufferingChanged,
+        this, [this](const BufferingInfo &buffering) {
+            m_bufferingIndicator->updateStatus(
+                buffering, m_playerCore->info().isSeeking);
+        });
+    connect(
+        m_playerCore, &PlayerCore::seekingChanged,
+        this, [this](bool seeking) {
+            m_bufferingIndicator->updateStatus(
+                m_playerCore->info().buffering, seeking);
+        });
 
     m_chromeAutoHideTimer = new QTimer(this);
     m_chromeAutoHideTimer->setSingleShot(true);
@@ -464,6 +521,7 @@ void MainWindow::setupWindowChrome()
     QTimer::singleShot(0, this, [this] {
         applyDarkWindowFrame();
         positionPlayerChrome();
+        positionPlaybackFeedback();
         revealPlayerChrome(false);
     });
 }
@@ -607,6 +665,15 @@ void MainWindow::enterProgressMode()
     }
 
     m_progressMode = true;
+    if (m_playbackOsd) {
+        m_playbackOsd->hideNow();
+    }
+    if (m_timelinePreview) {
+        m_timelinePreview->dismiss();
+    }
+    if (m_bufferingIndicator) {
+        m_bufferingIndicator->hide();
+    }
     m_progressRestoreFullScreen = isFullScreenMode();
     m_progressRestoreMaximized =
         !m_progressRestoreFullScreen && isMaximized();
@@ -725,6 +792,10 @@ void MainWindow::exitProgressMode()
     m_videoSurface->setFocus(Qt::OtherFocusReason);
     m_videoSurface->setLiveResize(false);
     m_videoSurface->update();
+    positionPlaybackFeedback();
+    m_bufferingIndicator->updateStatus(
+        m_playerCore->info().buffering,
+        m_playerCore->info().isSeeking);
     revealPlayerChrome(false);
 }
 
@@ -875,6 +946,37 @@ void MainWindow::positionPlayerChrome()
     m_playerChrome->raise();
 }
 
+void MainWindow::positionPlaybackFeedback()
+{
+    if (!m_playbackPage || m_progressMode) {
+        return;
+    }
+    if (m_playbackOsd) {
+        const int x = std::max(
+            12, (m_playbackPage->width() - m_playbackOsd->width()) / 2);
+        const int y = std::max(
+            12, qRound(m_playbackPage->height() * 0.12));
+        m_playbackOsd->move(x, y);
+    }
+    if (m_bufferingIndicator) {
+        m_bufferingIndicator->move(
+            std::max(0, (m_playbackPage->width()
+                         - m_bufferingIndicator->width()) / 2),
+            std::max(0, (m_playbackPage->height()
+                         - m_bufferingIndicator->height()) / 2));
+    }
+}
+
+void MainWindow::showPlaybackOsd(
+    const QString &title, const QString &detail, double progress)
+{
+    if (!m_playbackOsd || m_progressMode || title.isEmpty()) {
+        return;
+    }
+    positionPlaybackFeedback();
+    m_playbackOsd->showMessage(title, detail, progress);
+}
+
 void MainWindow::beginShutdown()
 {
     // libmpv requires every render context to be freed before its core is
@@ -886,6 +988,9 @@ void MainWindow::beginShutdown()
     m_videoSurface = nullptr;
     m_playbackPage = nullptr;
     m_playerChrome = nullptr;
+    m_playbackOsd = nullptr;
+    m_timelinePreview = nullptr;
+    m_bufferingIndicator = nullptr;
     m_progressBar = nullptr;
     m_contentLayout = nullptr;
     m_playerCore->shutdown();
