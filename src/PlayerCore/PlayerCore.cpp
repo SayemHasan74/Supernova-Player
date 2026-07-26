@@ -1,5 +1,6 @@
 #include "PlayerCore/PlayerCore.h"
 
+#include "App/MediaSourceResolver.h"
 #include "Core/Logger.h"
 #include "Mpv/MpvCore.h"
 
@@ -109,9 +110,36 @@ void PlayerCore::openUrls(const QList<QUrl> &urls)
         return;
     }
 
-    openPrimaryUrl(validUrls.constFirst());
-    for (qsizetype index = 1; index < validUrls.size(); ++index) {
-        const QUrl &url = validUrls.at(index);
+    const QUrl openedUrl = validUrls.constFirst();
+    QList<QUrl> queue = validUrls;
+    int openedPosition = 0;
+    if (validUrls.size() == 1 && openedUrl.isLocalFile()
+        && !MediaSourceResolver::supportedPlaylistExtensions().contains(
+            QFileInfo(openedUrl.toLocalFile()).suffix().toLower())) {
+        queue = MediaSourceResolver::siblingPlaylistFor(openedUrl);
+        const QString openedPath =
+            QFileInfo(openedUrl.toLocalFile()).canonicalFilePath();
+        for (int index = 0; index < queue.size(); ++index) {
+            const QString candidate =
+                QFileInfo(queue[index].toLocalFile()).canonicalFilePath();
+            if (!openedPath.isEmpty()
+                && candidate.compare(
+                       openedPath, Qt::CaseInsensitive) == 0) {
+                openedPosition = index;
+                break;
+            }
+        }
+    }
+
+    openPrimaryUrl(openedUrl);
+    for (const QUrl &url : std::as_const(queue)) {
+        if (url == openedUrl
+            || (url.isLocalFile() && openedUrl.isLocalFile()
+                && QFileInfo(url.toLocalFile()).absoluteFilePath().compare(
+                       QFileInfo(openedUrl.toLocalFile()).absoluteFilePath(),
+                       Qt::CaseInsensitive) == 0)) {
+            continue;
+        }
         const QString source =
             url.isLocalFile() ? url.toLocalFile() : url.toString();
         m_mpv->command(
@@ -126,10 +154,20 @@ void PlayerCore::openUrls(const QList<QUrl> &urls)
                 }
             });
     }
-    if (validUrls.size() > 1) {
+    // IINA inserts naturally earlier siblings before the opened file while
+    // retaining that file as the playing entry.
+    if (validUrls.size() == 1 && queue.size() > 1) {
+        for (int index = 0; index < openedPosition; ++index) {
+            m_mpv->command(
+                {QStringLiteral("playlist-move"),
+                 QString::number(index + 1),
+                 QString::number(index)});
+        }
+    }
+    if (queue.size() > 1) {
         Logger::info(
             QStringLiteral("Added %1 additional media item(s) to the playlist")
-                .arg(validUrls.size() - 1));
+                .arg(queue.size() - 1));
     }
 }
 
@@ -264,10 +302,11 @@ void PlayerCore::navigateInPlaylist(bool nextMedia)
         seekAbsolute(0.0);
         return;
     }
-    if (nextMedia && playlistPosition >= playlistCount - 1) {
+    if (nextMedia && playlistPosition >= playlistCount - 1
+        && m_info.playlist.loopMode
+               != PlaylistLoopMode::Playlist) {
         return;
     }
-
     // Match the manual-open lifecycle: pause before switching so audio cannot
     // run ahead of a slow video decoder, then resume only when the replacement
     // has loaded and its video surface is ready.
@@ -429,12 +468,9 @@ void PlayerCore::shufflePlaylist()
     if (m_info.playlist.size() < 2) {
         return;
     }
-    m_mpv->command(
-        {m_info.playlist.shuffled
-             ? QStringLiteral("playlist-unshuffle")
-             : QStringLiteral("playlist-shuffle")});
-    m_info.playlist.shuffled = !m_info.playlist.shuffled;
-    emit playlistChanged(m_info.playlist);
+    // IINA treats Shuffle as a momentary action: each press reshuffles the
+    // current queue rather than toggling back to a hidden original order.
+    m_mpv->command({QStringLiteral("playlist-shuffle")});
 }
 
 void PlayerCore::sortPlaylist(PlaylistSortOrder order)

@@ -80,6 +80,9 @@ private:
     void openFiles();
     void openFolder();
     void addFilesToPlaylist();
+    void addUrlToPlaylist();
+    void importPlaylist();
+    void savePlaylist();
     void requestOpen(const QList<QUrl> &urls);
     void restoreAfterMinimize();
     void revealPlayerChrome(bool animated = true);

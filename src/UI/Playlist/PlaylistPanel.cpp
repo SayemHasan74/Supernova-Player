@@ -5,28 +5,143 @@
 
 #include <QAbstractItemModel>
 #include <QAction>
+#include <QApplication>
+#include <QClipboard>
 #include <QCursor>
+#include <QDesktopServices>
+#include <QDir>
 #include <QDropEvent>
 #include <QFileInfo>
 #include <QHBoxLayout>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QListWidget>
 #include <QMenu>
 #include <QMimeData>
+#include <QProgressBar>
 #include <QPushButton>
+#include <QStyle>
 #include <QVBoxLayout>
 
 #include <algorithm>
 #include <functional>
 
 namespace {
+QString formatTime(double seconds)
+{
+    const int value = std::max(0, static_cast<int>(seconds));
+    const int hours = value / 3600;
+    const int minutes = (value % 3600) / 60;
+    const int secs = value % 60;
+    return hours > 0
+        ? QStringLiteral("%1:%2:%3")
+              .arg(hours)
+              .arg(minutes, 2, 10, QLatin1Char('0'))
+              .arg(secs, 2, 10, QLatin1Char('0'))
+        : QStringLiteral("%1:%2")
+              .arg(minutes)
+              .arg(secs, 2, 10, QLatin1Char('0'));
+}
+
+class PlaylistRow final : public QWidget {
+public:
+    explicit PlaylistRow(QWidget *parent = nullptr)
+        : QWidget(parent)
+    {
+        setAttribute(Qt::WA_TransparentForMouseEvents);
+        auto *layout = new QVBoxLayout(this);
+        layout->setContentsMargins(3, 3, 5, 2);
+        layout->setSpacing(1);
+        auto *line = new QHBoxLayout;
+        line->setSpacing(5);
+        m_pointer = new QLabel(this);
+        m_pointer->setFixedWidth(12);
+        m_title = new QLabel(this);
+        m_title->setTextInteractionFlags(Qt::NoTextInteraction);
+        m_title->setSizePolicy(
+            QSizePolicy::Ignored, QSizePolicy::Preferred);
+        m_duration = new QLabel(this);
+        m_duration->setStyleSheet(
+            QStringLiteral("color: rgba(235,235,245,155);"));
+        QFont durationFont = m_duration->font();
+        durationFont.setStyleHint(QFont::Monospace);
+        durationFont.setFixedPitch(true);
+        durationFont.setPixelSize(11);
+        m_duration->setFont(durationFont);
+        line->addWidget(m_pointer);
+        line->addWidget(m_title, 1);
+        line->addWidget(m_duration);
+        layout->addLayout(line);
+        m_progress = new QProgressBar(this);
+        m_progress->setTextVisible(false);
+        m_progress->setRange(0, 1000);
+        m_progress->setFixedHeight(3);
+        m_progress->setStyleSheet(QStringLiteral(
+            "QProgressBar { border: 0; background: rgba(255,255,255,22);"
+            " border-radius: 1px; }"
+            "QProgressBar::chunk { background: rgb(67,137,225);"
+            " border-radius: 1px; }"));
+        layout->addWidget(m_progress);
+    }
+
+    void setEntry(
+        const PlaylistItem &entry, double position, double duration)
+    {
+        m_pointer->setText(
+            entry.playing || entry.current
+                ? QStringLiteral("▶") : QString());
+        m_title->setText(entry.displayName);
+        m_title->setToolTip(entry.url.toDisplayString());
+        QFont font = m_title->font();
+        font.setWeight(
+            entry.playing || entry.current
+                ? QFont::DemiBold : QFont::Normal);
+        m_title->setFont(font);
+        setProgress(position, duration);
+    }
+
+    void setProgress(double position, double duration)
+    {
+        if (duration > 0.0) {
+            m_duration->setText(formatTime(duration));
+            m_progress->setValue(static_cast<int>(
+                std::clamp(position / duration, 0.0, 1.0) * 1000.0));
+            m_progress->show();
+        } else {
+            m_duration->clear();
+            m_progress->setValue(0);
+            m_progress->hide();
+        }
+    }
+
+private:
+    QLabel *m_pointer = nullptr;
+    QLabel *m_title = nullptr;
+    QLabel *m_duration = nullptr;
+    QProgressBar *m_progress = nullptr;
+};
+
 class PlaylistList final : public QListWidget {
 public:
     using QListWidget::QListWidget;
     std::function<void(const QList<int> &, int)> moveHandler;
     std::function<void(const QList<QUrl> &, int)> urlHandler;
+    std::function<void()> deleteHandler;
 
 protected:
+    void keyPressEvent(QKeyEvent *event) override
+    {
+        if (event->key() == Qt::Key_Delete
+            || event->key() == Qt::Key_Backspace) {
+            if (deleteHandler) {
+                deleteHandler();
+            }
+            event->accept();
+            return;
+        }
+        QListWidget::keyPressEvent(event);
+    }
+
     void dropEvent(QDropEvent *event) override
     {
         int destination = indexAt(event->position().toPoint()).row();
@@ -43,10 +158,11 @@ protected:
             if (moveHandler) {
                 moveHandler(rows, destination);
             }
-            event->acceptProposedAction();
+            event->setDropAction(Qt::MoveAction);
+            event->accept();
             return;
         }
-        QList<QUrl> urls =
+        const QList<QUrl> urls =
             MediaSourceResolver::fromMimeData(event->mimeData());
         if (!urls.isEmpty() && urlHandler) {
             urlHandler(urls, destination);
@@ -73,27 +189,26 @@ PlaylistPanel::PlaylistPanel(QWidget *parent)
 {
     setObjectName(QStringLiteral("playlistPanel"));
     setAttribute(Qt::WA_StyledBackground);
-    setMinimumWidth(285);
-    setMaximumWidth(370);
+    setMinimumWidth(305);
+    setMaximumWidth(420);
     setStyleSheet(QStringLiteral(
         "#playlistPanel { background: rgba(25,25,28,246);"
         " border-left: 1px solid rgba(255,255,255,35); }"
         "QLabel { color: rgb(240,240,244); }"
         "QListWidget { background: transparent; color: rgb(238,238,242);"
-        " border: 0; outline: 0; padding: 4px; }"
-        "QListWidget::item { height: 32px; padding: 2px 7px;"
-        " border-bottom: 1px solid rgba(255,255,255,16); }"
-        "QListWidget::item:selected { background: rgba(75,115,175,150);"
+        " border: 0; outline: 0; padding: 3px; }"
+        "QListWidget::item { height: 39px; padding: 1px 4px;"
+        " border-bottom: 1px solid rgba(255,255,255,14); }"
+        "QListWidget::item:selected { background: rgba(73,112,169,155);"
         " border-radius: 5px; }"
         "QPushButton { color: rgb(240,240,244); background: transparent;"
         " border: 0; border-radius: 5px; }"
         "QPushButton:hover { background: rgba(255,255,255,28); }"
-        "QPushButton:checked { background: rgba(95,135,195,150); }"));
+        "QPushButton:pressed { background: rgba(255,255,255,42); }"));
 
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(10, 9, 10, 9);
     layout->setSpacing(7);
-
     auto *header = new QHBoxLayout;
     auto *title = new QLabel(tr("Playlist"), this);
     QFont titleFont = title->font();
@@ -122,6 +237,12 @@ PlaylistPanel::PlaylistPanel(QWidget *parent)
     list->urlHandler = [this](const QList<QUrl> &urls, int destination) {
         emit urlsDropped(urls, destination);
     };
+    list->deleteHandler = [this] {
+        const QList<int> selected = selectedIndexes();
+        if (!selected.isEmpty()) {
+            emit removeRequested(selected);
+        }
+    };
     layout->addWidget(m_list, 1);
 
     auto *footer = new QHBoxLayout;
@@ -129,7 +250,7 @@ PlaylistPanel::PlaylistPanel(QWidget *parent)
     m_loopButton = toolButton(
         QStringLiteral("↻"), tr("Cycle Loop Mode"), this);
     m_shuffleButton = toolButton(
-        QStringLiteral("⇄"), tr("Shuffle / Unshuffle"), this);
+        QStringLiteral("⇄"), tr("Shuffle Playlist"), this);
     auto *sortButton = toolButton(
         QStringLiteral("⇅"), tr("Sort Playlist"), this);
     m_summary = new QLabel(tr("0 items"), this);
@@ -139,8 +260,8 @@ PlaylistPanel::PlaylistPanel(QWidget *parent)
         QStringLiteral("+"), tr("Add Media"), this);
     auto *removeButton = toolButton(
         QStringLiteral("−"), tr("Remove Selected"), this);
-    auto *clearButton = toolButton(
-        QStringLiteral("⌫"), tr("Clear Queue"), this);
+    auto *moreButton = toolButton(
+        QStringLiteral("•••"), tr("Playlist Actions"), this);
     footer->addWidget(m_loopButton);
     footer->addWidget(m_shuffleButton);
     footer->addWidget(sortButton);
@@ -149,17 +270,45 @@ PlaylistPanel::PlaylistPanel(QWidget *parent)
     footer->addStretch();
     footer->addWidget(addButton);
     footer->addWidget(removeButton);
-    footer->addWidget(clearButton);
+    footer->addWidget(moreButton);
     layout->addLayout(footer);
 
     connect(closeButton, &QPushButton::clicked,
             this, &PlaylistPanel::closeRequested);
-    connect(addButton, &QPushButton::clicked,
-            this, &PlaylistPanel::addRequested);
-    connect(removeButton, &QPushButton::clicked,
-            this, [this] { emit removeRequested(selectedIndexes()); });
-    connect(clearButton, &QPushButton::clicked,
-            this, &PlaylistPanel::clearRequested);
+    connect(addButton, &QPushButton::clicked, this, [this, addButton] {
+        QMenu menu(this);
+        QAction *fileAction = menu.addAction(tr("Add File…"));
+        QAction *urlAction = menu.addAction(tr("Add URL…"));
+        QAction *chosen = menu.exec(
+            addButton->mapToGlobal(QPoint(0, addButton->height())));
+        if (chosen == fileAction) {
+            emit addRequested();
+        } else if (chosen == urlAction) {
+            emit addUrlRequested();
+        }
+    });
+    connect(removeButton, &QPushButton::clicked, this, [this] {
+        emit removeRequested(selectedIndexes());
+    });
+    connect(moreButton, &QPushButton::clicked, this, [this, moreButton] {
+        QMenu menu(this);
+        QAction *importAction = menu.addAction(tr("Import Playlist…"));
+        QAction *exportAction = menu.addAction(tr("Save Playlist…"));
+        exportAction->setEnabled(!m_playlist.isEmpty());
+        menu.addSeparator();
+        QAction *clearAction = menu.addAction(tr("Clear Playlist"));
+        clearAction->setEnabled(!m_playlist.isEmpty());
+        QAction *chosen = menu.exec(
+            moreButton->mapToGlobal(
+                QPoint(0, moreButton->height())));
+        if (chosen == importAction) {
+            emit importRequested();
+        } else if (chosen == exportAction) {
+            emit exportRequested();
+        } else if (chosen == clearAction) {
+            emit clearRequested();
+        }
+    });
     connect(m_loopButton, &QPushButton::clicked,
             this, &PlaylistPanel::loopRequested);
     connect(m_shuffleButton, &QPushButton::clicked,
@@ -184,32 +333,54 @@ void PlaylistPanel::setPlaylist(const PlaylistState &playlist)
     m_playlist = playlist;
     m_list->clear();
     for (const PlaylistItem &entry : playlist.items) {
-        QString text = entry.displayName;
-        if (entry.current || entry.playing) {
-            text.prepend(QStringLiteral("▶  "));
-        }
-        auto *item = new QListWidgetItem(text, m_list);
+        auto *item = new QListWidgetItem(m_list);
         item->setData(Qt::UserRole, entry.id);
         item->setToolTip(entry.url.toDisplayString());
-        if (entry.current || entry.playing) {
-            QFont font = item->font();
-            font.setWeight(QFont::DemiBold);
-            item->setFont(font);
-            item->setForeground(Supernova::Ui::primaryText);
-        }
+        auto *row = new PlaylistRow(m_list);
+        const auto progress =
+            m_progressById.value(entry.id, {0.0, 0.0});
+        row->setEntry(entry, progress.first, progress.second);
+        m_list->setItemWidget(item, row);
         item->setSelected(selectedIds.contains(entry.id));
     }
     m_summary->setText(
-        tr("%n item(s)", nullptr, playlist.size()));
-    m_loopButton->setChecked(
-        playlist.loopMode != PlaylistLoopMode::Off);
+        playlist.currentIndex >= 0
+            ? tr("%1 of %2")
+                  .arg(playlist.currentIndex + 1)
+                  .arg(playlist.size())
+            : tr("%n item(s)", nullptr, playlist.size()));
     m_loopButton->setText(
         playlist.loopMode == PlaylistLoopMode::File
-            ? QStringLiteral("↻1") : QStringLiteral("↻"));
-    m_shuffleButton->setChecked(playlist.shuffled);
-    if (playlist.currentIndex >= 0) {
+            ? QStringLiteral("↻1")
+            : playlist.loopMode == PlaylistLoopMode::Playlist
+                ? QStringLiteral("↻●") : QStringLiteral("↻"));
+    if (playlist.currentIndex >= 0
+        && playlist.currentIndex < m_list->count()) {
         m_list->scrollToItem(m_list->item(playlist.currentIndex));
+        setPlaybackDuration(m_currentDuration);
+        setPlaybackPosition(m_currentPosition);
     }
+}
+
+void PlaylistPanel::setPlaybackPosition(double seconds)
+{
+    m_currentPosition = std::max(0.0, seconds);
+    const int index = m_playlist.currentIndex;
+    if (index < 0 || index >= m_playlist.size()) {
+        return;
+    }
+    const qint64 id = m_playlist.items[index].id;
+    m_progressById[id] = {m_currentPosition, m_currentDuration};
+    if (auto *row = dynamic_cast<PlaylistRow *>(
+            m_list->itemWidget(m_list->item(index)))) {
+        row->setProgress(m_currentPosition, m_currentDuration);
+    }
+}
+
+void PlaylistPanel::setPlaybackDuration(double seconds)
+{
+    m_currentDuration = std::max(0.0, seconds);
+    setPlaybackPosition(m_currentPosition);
 }
 
 QList<int> PlaylistPanel::selectedIndexes() const
@@ -225,22 +396,93 @@ QList<int> PlaylistPanel::selectedIndexes() const
 
 void PlaylistPanel::showContextMenu(const QPoint &position)
 {
+    if (QListWidgetItem *clicked = m_list->itemAt(position);
+        clicked && !clicked->isSelected()) {
+        m_list->clearSelection();
+        clicked->setSelected(true);
+        m_list->setCurrentItem(clicked);
+    }
     const QList<int> selected = selectedIndexes();
-    if (selected.isEmpty()) {
+    QMenu menu(this);
+    if (!selected.isEmpty()) {
+        const PlaylistItem &first = m_playlist.items[selected.constFirst()];
+        QAction *heading = menu.addAction(
+            selected.size() == 1
+                ? first.displayName
+                : tr("%n Items", nullptr, selected.size()));
+        heading->setEnabled(false);
+        menu.addSeparator();
+        QAction *play = menu.addAction(tr("Play"));
+        QAction *playNext = menu.addAction(tr("Play Next"));
+        QAction *remove = menu.addAction(
+            selected.size() == 1
+                ? tr("Remove from Playlist")
+                : tr("Remove %n Items", nullptr, selected.size()));
+        menu.addSeparator();
+        QAction *openLocation = nullptr;
+        QAction *copyLocation = nullptr;
+        if (first.networkResource) {
+            openLocation = menu.addAction(tr("Open in Browser"));
+            copyLocation = menu.addAction(tr("Copy URL"));
+        } else {
+            openLocation = menu.addAction(tr("Show in File Explorer"));
+            copyLocation = menu.addAction(tr("Copy Path"));
+        }
+        menu.addSeparator();
+        QAction *addFile = menu.addAction(tr("Add File…"));
+        QAction *addUrl = menu.addAction(tr("Add URL…"));
+        QAction *clear = menu.addAction(tr("Clear Playlist"));
+        QAction *chosen = menu.exec(
+            m_list->viewport()->mapToGlobal(position));
+        if (chosen == play) {
+            emit playRequested(selected.constFirst());
+        } else if (chosen == playNext) {
+            emit playNextRequested(selected);
+        } else if (chosen == remove) {
+            emit removeRequested(selected);
+        } else if (chosen == openLocation) {
+            if (first.networkResource) {
+                QDesktopServices::openUrl(first.url);
+            } else {
+                QDesktopServices::openUrl(QUrl::fromLocalFile(
+                    QFileInfo(first.url.toLocalFile()).absolutePath()));
+            }
+        } else if (chosen == copyLocation) {
+            QStringList locations;
+            for (int index : selected) {
+                const QUrl &url = m_playlist.items[index].url;
+                locations.append(
+                    url.isLocalFile()
+                        ? QDir::toNativeSeparators(url.toLocalFile())
+                        : url.toString(QUrl::FullyEncoded));
+            }
+            QApplication::clipboard()->setText(
+                locations.join(QLatin1Char('\n')));
+        } else if (chosen == addFile) {
+            emit addRequested();
+        } else if (chosen == addUrl) {
+            emit addUrlRequested();
+        } else if (chosen == clear) {
+            emit clearRequested();
+        }
         return;
     }
-    QMenu menu(this);
-    QAction *play = menu.addAction(tr("Play"));
-    QAction *playNext = menu.addAction(tr("Play Next"));
-    menu.addSeparator();
-    QAction *remove = menu.addAction(tr("Remove from Playlist"));
-    QAction *chosen = menu.exec(m_list->viewport()->mapToGlobal(position));
-    if (chosen == play) {
-        emit playRequested(selected.constFirst());
-    } else if (chosen == playNext) {
-        emit playNextRequested(selected);
-    } else if (chosen == remove) {
-        emit removeRequested(selected);
+
+    QAction *add = menu.addAction(tr("Add File…"));
+    QAction *urlAction = menu.addAction(tr("Add URL…"));
+    QAction *importAction = menu.addAction(tr("Import Playlist…"));
+    QAction *clear = menu.addAction(tr("Clear Playlist"));
+    clear->setEnabled(!m_playlist.isEmpty());
+    QAction *chosen = menu.exec(
+        m_list->viewport()->mapToGlobal(position));
+    if (chosen == add) {
+        emit addRequested();
+    } else if (chosen == urlAction) {
+        emit addUrlRequested();
+    } else if (chosen == importAction) {
+        emit importRequested();
+    } else if (chosen == clear) {
+        emit clearRequested();
     }
 }
 

@@ -207,6 +207,52 @@ QList<QUrl> MediaSourceResolver::resolve(const QList<QUrl> &urls)
     return unique;
 }
 
+QList<QUrl> MediaSourceResolver::siblingPlaylistFor(
+    const QUrl &openedUrl)
+{
+    if (!openedUrl.isLocalFile()) {
+        return {openedUrl};
+    }
+    const QFileInfo opened(normalizedLocalPath(openedUrl.toLocalFile()));
+    if (!opened.exists() || !opened.isFile()
+        || !isSupportedMediaFile(opened)) {
+        return {openedUrl};
+    }
+
+    QList<QUrl> videos;
+    QList<QUrl> audios;
+    const QDir directory = opened.absoluteDir();
+    const QFileInfoList entries = directory.entryInfoList(
+        QDir::Files | QDir::Readable | QDir::NoDotAndDotDot,
+        QDir::NoSort);
+    for (const QFileInfo &entry : entries) {
+        const QString suffix = entry.suffix().toLower();
+        QList<QUrl> *target = nullptr;
+        if (kVideoExtensions.contains(suffix)) {
+            target = &videos;
+        } else if (kAudioExtensions.contains(suffix)) {
+            target = &audios;
+        }
+        if (target) {
+            target->append(QUrl::fromLocalFile(
+                normalizedLocalPath(entry.absoluteFilePath())));
+        }
+    }
+    std::sort(videos.begin(), videos.end(), naturalUrlLessThan);
+    std::sort(audios.begin(), audios.end(), naturalUrlLessThan);
+    QList<QUrl> result = videos + audios;
+    const QString openedKey =
+        deduplicationKey(QUrl::fromLocalFile(opened.absoluteFilePath()));
+    if (std::none_of(
+            result.cbegin(), result.cend(),
+            [&openedKey](const QUrl &candidate) {
+                return deduplicationKey(candidate) == openedKey;
+            })) {
+        return {QUrl::fromLocalFile(opened.absoluteFilePath())};
+    }
+    return result;
+}
+
 bool MediaSourceResolver::canResolve(const QMimeData *mimeData)
 {
     if (!mimeData) {

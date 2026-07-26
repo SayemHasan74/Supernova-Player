@@ -38,6 +38,8 @@ qt_add_executable(Supernova WIN32
     src/PlayerCore/BufferingInfo.h
     src/PlayerCore/PlaybackInfo.h
     src/PlayerCore/PlaylistState.h
+    src/PlayerCore/PlaylistIO.h
+    src/PlayerCore/PlaylistIO.cpp
     src/PlayerCore/PlayerCore.h
     src/PlayerCore/PlayerCore.cpp
     src/UI/Design/DesignTokens.h
@@ -124,6 +126,9 @@ if(BUILD_TESTING)
         tests/MediaSourceResolverTests.cpp
         src/App/MediaSourceResolver.h
         src/App/MediaSourceResolver.cpp
+        src/PlayerCore/PlaylistIO.h
+        src/PlayerCore/PlaylistIO.cpp
+        src/PlayerCore/PlaylistState.h
     )
     target_include_directories(
         SupernovaMediaSourceResolverTests PRIVATE src)
@@ -159,6 +164,8 @@ if(BUILD_TESTING)
 
     qt_add_executable(SupernovaPlayerCoreLifecycleTests
         tests/PlayerCoreLifecycleTests.cpp
+        src/App/MediaSourceResolver.h
+        src/App/MediaSourceResolver.cpp
         src/Core/Logger.h
         src/Core/Logger.cpp
         src/Mpv/MpvCore.h
@@ -193,6 +200,8 @@ if(BUILD_TESTING)
 
     qt_add_executable(SupernovaIinaPlayerChromeTests
         tests/IinaPlayerChromeTests.cpp
+        src/App/MediaSourceResolver.h
+        src/App/MediaSourceResolver.cpp
         src/Core/Logger.h
         src/Core/Logger.cpp
         src/Mpv/MpvCore.h

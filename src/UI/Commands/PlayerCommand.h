@@ -7,6 +7,8 @@
 enum class PlayerCommand {
     OpenFile,
     OpenFolder,
+    ImportPlaylist,
+    SavePlaylist,
     CloseWindow,
     QuitApplication,
     TogglePause,

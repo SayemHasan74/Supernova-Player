@@ -4,6 +4,7 @@
 #include "Mpv/MpvCore.h"
 #include "Mpv/MpvVideoSurface.h"
 #include "PlayerCore/PlayerCore.h"
+#include "PlayerCore/PlaylistIO.h"
 #include "UI/Controls/IinaPlayerChrome.h"
 #include "UI/Controls/PlaybackFeedback.h"
 #include "UI/Commands/PlayerCommand.h"
@@ -21,8 +22,10 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QIcon>
+#include <QInputDialog>
 #include <QKeyEvent>
 #include <QKeySequence>
+#include <QLineEdit>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
@@ -625,10 +628,20 @@ void MainWindow::setupWindowChrome()
         });
     connect(m_playerCore, &PlayerCore::playlistChanged,
             m_playlistPanel, &PlaylistPanel::setPlaylist);
+    connect(m_playerCore, &PlayerCore::positionChanged,
+            m_playlistPanel, &PlaylistPanel::setPlaybackPosition);
+    connect(m_playerCore, &PlayerCore::durationChanged,
+            m_playlistPanel, &PlaylistPanel::setPlaybackDuration);
     connect(m_playlistPanel, &PlaylistPanel::closeRequested,
             this, &MainWindow::togglePlaylist);
     connect(m_playlistPanel, &PlaylistPanel::addRequested,
             this, &MainWindow::addFilesToPlaylist);
+    connect(m_playlistPanel, &PlaylistPanel::addUrlRequested,
+            this, &MainWindow::addUrlToPlaylist);
+    connect(m_playlistPanel, &PlaylistPanel::importRequested,
+            this, &MainWindow::importPlaylist);
+    connect(m_playlistPanel, &PlaylistPanel::exportRequested,
+            this, &MainWindow::savePlaylist);
     connect(m_playlistPanel, &PlaylistPanel::removeRequested,
             m_playerCore, &PlayerCore::removePlaylistItems);
     connect(m_playlistPanel, &PlaylistPanel::clearRequested,
@@ -762,6 +775,12 @@ void MainWindow::executeCommand(PlayerCommand command)
         break;
     case PlayerCommand::OpenFolder:
         openFolder();
+        break;
+    case PlayerCommand::ImportPlaylist:
+        importPlaylist();
+        break;
+    case PlayerCommand::SavePlaylist:
+        savePlaylist();
         break;
     case PlayerCommand::CloseWindow:
         close();
@@ -943,6 +962,72 @@ void MainWindow::addFilesToPlaylist()
     m_lastOpenDirectory = QFileInfo(paths.constFirst()).absolutePath();
     m_playerCore->appendToPlaylist(
         MediaSourceResolver::fromUserInputs(paths));
+}
+
+void MainWindow::addUrlToPlaylist()
+{
+    bool accepted = false;
+    const QString input = QInputDialog::getText(
+        this, tr("Add URL"), tr("Media URL:"),
+        QLineEdit::Normal, QString(), &accepted).trimmed();
+    if (!accepted || input.isEmpty()) {
+        return;
+    }
+    const QUrl url = QUrl::fromUserInput(input);
+    if (!url.isValid() || url.scheme().isEmpty()) {
+        QMessageBox::warning(
+            this, tr("Invalid URL"),
+            tr("Enter a complete media URL."));
+        return;
+    }
+    m_playerCore->appendToPlaylist({url});
+}
+
+void MainWindow::importPlaylist()
+{
+    const QString path = QFileDialog::getOpenFileName(
+        this, tr("Import Playlist"),
+        m_lastOpenDirectory.isEmpty()
+            ? QDir::homePath() : m_lastOpenDirectory,
+        tr("Playlists (*.m3u *.m3u8 *.pls);;All files (*.*)"));
+    if (path.isEmpty()) {
+        return;
+    }
+    const PlaylistIO::ImportResult result =
+        PlaylistIO::importFile(path);
+    if (!result.succeeded()) {
+        QMessageBox::warning(
+            this, tr("Could Not Import Playlist"), result.error);
+        return;
+    }
+    m_lastOpenDirectory = QFileInfo(path).absolutePath();
+    m_playerCore->appendToPlaylist(result.urls);
+}
+
+void MainWindow::savePlaylist()
+{
+    if (m_playerCore->info().playlist.isEmpty()) {
+        return;
+    }
+    QString path = QFileDialog::getSaveFileName(
+        this, tr("Save Playlist"),
+        m_lastOpenDirectory.isEmpty()
+            ? QDir::homePath() : m_lastOpenDirectory,
+        tr("M3U8 Playlist (*.m3u8)"));
+    if (path.isEmpty()) {
+        return;
+    }
+    if (QFileInfo(path).suffix().isEmpty()) {
+        path += QStringLiteral(".m3u8");
+    }
+    const QString error = PlaylistIO::exportM3u8(
+        path, m_playerCore->info().playlist);
+    if (!error.isEmpty()) {
+        QMessageBox::warning(
+            this, tr("Could Not Save Playlist"), error);
+        return;
+    }
+    m_lastOpenDirectory = QFileInfo(path).absolutePath();
 }
 
 void MainWindow::requestOpen(const QList<QUrl> &urls)

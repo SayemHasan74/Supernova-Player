@@ -54,6 +54,7 @@ private slots:
     void realMediaReachesEofAndRestarts();
     void nativePlaylistBuildsAuthoritativeQueueState();
     void realPlaylistSupportsPlayRemoveAndClear();
+    void singleLocalFileAutoloadsSiblingsAndNextPlaysThem();
 };
 
 void PlayerCoreLifecycleTests::initTestCase()
@@ -282,6 +283,39 @@ void PlayerCoreLifecycleTests::realPlaylistSupportsPlayRemoveAndClear()
     QTRY_COMPARE_WITH_TIMEOUT(core.info().playlist.size(), 1, 5000);
     QCOMPARE(core.info().playlist.currentIndex, 0);
     QVERIFY(playlistSpy.count() >= 3);
+}
+
+void PlayerCoreLifecycleTests::
+    singleLocalFileAutoloadsSiblingsAndNextPlaysThem()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString track2 =
+        directory.filePath(QStringLiteral("episode2.wav"));
+    const QString track10 =
+        directory.filePath(QStringLiteral("episode10.wav"));
+    QVERIFY(createSilentWaveFile(track2));
+    QVERIFY(createSilentWaveFile(track10));
+
+    PlayerCore core;
+    core.m_mpv->setString(
+        QStringLiteral("ao"), QStringLiteral("null"));
+    core.m_mpv->setFlag(QStringLiteral("mute"), true);
+    core.openUrl(QUrl::fromLocalFile(track2));
+
+    QTRY_COMPARE_WITH_TIMEOUT(core.info().playlist.size(), 2, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        core.info().playlist.currentIndex, 0, 5000);
+    QCOMPARE(
+        core.info().playlist.items[0].url.toLocalFile(), track2);
+    QCOMPARE(
+        core.info().playlist.items[1].url.toLocalFile(), track10);
+
+    core.navigateInPlaylist(true);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        core.info().playlist.currentIndex, 1, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        core.info().currentUrl.toLocalFile(), track10, 5000);
 }
 
 QTEST_GUILESS_MAIN(PlayerCoreLifecycleTests)

@@ -1,4 +1,5 @@
 #include "App/MediaSourceResolver.h"
+#include "PlayerCore/PlaylistIO.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -12,6 +13,13 @@ bool createFile(const QString &path)
 {
     QFile file(path);
     return file.open(QIODevice::WriteOnly) && file.write("test") == 4;
+}
+
+bool writeFile(const QString &path, const QByteArray &contents)
+{
+    QFile file(path);
+    return file.open(QIODevice::WriteOnly)
+           && file.write(contents) == contents.size();
 }
 
 bool expect(bool condition, const char *message)
@@ -61,6 +69,17 @@ int main(int argc, char *argv[])
     passed &= expect(folder.value(2).toLocalFile() == audio,
                      "nested media must be included recursively");
 
+    std::cerr << "Checking IINA-style sibling autoload\n";
+    const QList<QUrl> siblings =
+        MediaSourceResolver::siblingPlaylistFor(
+            QUrl::fromLocalFile(video10));
+    passed &= expect(siblings.size() == 2,
+                     "autoload must stay in the opened file's folder");
+    passed &= expect(siblings.value(0).toLocalFile() == video2,
+                     "autoload must use natural numeric order");
+    passed &= expect(siblings.value(1).toLocalFile() == video10,
+                     "opened file must retain its natural queue position");
+
     std::cerr << "Checking playlist handling\n";
     const QList<QUrl> singlePlaylist =
         MediaSourceResolver::resolve(
@@ -88,6 +107,45 @@ int main(int argc, char *argv[])
         remote.size() == 1
             && remote.constFirst().scheme() == QStringLiteral("https"),
         "network URLs must be accepted");
+
+    std::cerr << "Checking playlist import and export\n";
+    const QString importedPath =
+        root.filePath(QStringLiteral("import.m3u8"));
+    passed &= expect(
+        writeFile(
+            importedPath,
+            QByteArray("#EXTM3U\nvideo2.mp4\n"
+                       "https://example.com/live\n")),
+        "playlist fixture must be written");
+    const PlaylistIO::ImportResult imported =
+        PlaylistIO::importFile(importedPath);
+    passed &= expect(
+        imported.succeeded() && imported.urls.size() == 2,
+        "M3U8 import must accept relative local and network entries");
+    passed &= expect(
+        imported.urls.value(0).toLocalFile() == video2,
+        "relative playlist entries must resolve beside the playlist");
+
+    PlaylistState state;
+    state.items.append(
+        PlaylistItem{.id = 1,
+                     .url = QUrl::fromLocalFile(video2),
+                     .displayName = QStringLiteral("video2.mp4")});
+    state.items.append(
+        PlaylistItem{.id = 2,
+                     .url = QUrl(QStringLiteral("https://example.com/live")),
+                     .displayName = QStringLiteral("live"),
+                     .networkResource = true});
+    const QString exportedPath =
+        root.filePath(QStringLiteral("export.m3u8"));
+    passed &= expect(
+        PlaylistIO::exportM3u8(exportedPath, state).isEmpty(),
+        "playlist export must succeed");
+    const PlaylistIO::ImportResult roundTrip =
+        PlaylistIO::importFile(exportedPath);
+    passed &= expect(
+        roundTrip.succeeded() && roundTrip.urls.size() == 2,
+        "exported playlists must import without losing entries");
 
     std::cerr << "MediaSourceResolver tests complete\n";
     return passed ? 0 : 1;

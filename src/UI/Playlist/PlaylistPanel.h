@@ -3,6 +3,8 @@
 #include "PlayerCore/PlaylistState.h"
 
 #include <QList>
+#include <QHash>
+#include <QPair>
 #include <QUrl>
 #include <QWidget>
 
@@ -17,10 +19,15 @@ public:
     explicit PlaylistPanel(QWidget *parent = nullptr);
 
     void setPlaylist(const PlaylistState &playlist);
+    void setPlaybackPosition(double seconds);
+    void setPlaybackDuration(double seconds);
 
 signals:
     void closeRequested();
     void addRequested();
+    void addUrlRequested();
+    void importRequested();
+    void exportRequested();
     void removeRequested(const QList<int> &indexes);
     void clearRequested();
     void playRequested(int index);
@@ -41,4 +48,7 @@ private:
     QPushButton *m_loopButton = nullptr;
     QPushButton *m_shuffleButton = nullptr;
     PlaylistState m_playlist;
+    QHash<qint64, QPair<double, double>> m_progressById;
+    double m_currentPosition = 0.0;
+    double m_currentDuration = 0.0;
 };
