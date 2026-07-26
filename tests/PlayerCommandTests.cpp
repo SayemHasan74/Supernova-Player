@@ -15,7 +15,7 @@ private slots:
 void PlayerCommandTests::exposesCompleteUniqueCommandSet()
 {
     const auto &definitions = playerCommandDefinitions();
-    QCOMPARE(definitions.size(), 24);
+    QCOMPARE(definitions.size(), 25);
 
     QSet<int> commands;
     QSet<int> menus;
@@ -37,8 +37,7 @@ void PlayerCommandTests::keepsShortcutsUnambiguous()
     QSet<QString> shortcuts;
     for (const auto &definition : playerCommandDefinitions()) {
         for (const auto &shortcut : definition.shortcuts) {
-            const QString portable =
-                shortcut.toString(QKeySequence::PortableText);
+            const QString portable = shortcut;
             QVERIFY2(!portable.isEmpty(), qPrintable(definition.title));
             QVERIFY2(
                 !shortcuts.contains(portable),
@@ -66,6 +65,6 @@ void PlayerCommandTests::classifiesMediaDependentCommands()
     QVERIFY(fullScreen && !fullScreen->requiresMedia);
 }
 
-QTEST_MAIN(PlayerCommandTests)
+QTEST_APPLESS_MAIN(PlayerCommandTests)
 
 #include "PlayerCommandTests.moc"

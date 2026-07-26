@@ -1,8 +1,8 @@
 #pragma once
 
-#include <QKeySequence>
 #include <QList>
 #include <QString>
+#include <QStringList>
 
 enum class PlayerCommand {
     OpenFile,
@@ -28,6 +28,7 @@ enum class PlayerCommand {
     ToggleFullScreen,
     ToggleAlwaysOnTop,
     ToggleProgressMode,
+    TogglePlaylist,
     PauseAndMinimize,
 };
 
@@ -43,7 +44,7 @@ struct PlayerCommandDefinition {
     PlayerCommand command;
     PlayerMenu menu;
     QString title;
-    QList<QKeySequence> shortcuts;
+    QStringList shortcuts;
     bool requiresMedia = false;
     bool checkable = false;
 };

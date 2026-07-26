@@ -2,6 +2,7 @@
 
 #include "PlayerCore/BufferingInfo.h"
 #include "PlayerCore/PlayerState.h"
+#include "PlayerCore/PlaylistState.h"
 
 #include <QString>
 #include <QUrl>
@@ -27,6 +28,7 @@ struct PlaybackInfo {
     bool hasVideo = false;
     bool hasAudio = false;
     BufferingInfo buffering;
+    PlaylistState playlist;
 
     bool justOpenedFile = false;
 };

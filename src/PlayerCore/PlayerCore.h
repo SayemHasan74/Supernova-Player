@@ -34,6 +34,16 @@ public:
     void resume();
     void stop();
     void navigateInPlaylist(bool nextMedia);
+    void appendToPlaylist(const QList<QUrl> &urls, int index = -1);
+    void removePlaylistItems(const QList<int> &indexes);
+    void clearPlaylist();
+    void movePlaylistItems(
+        const QList<int> &indexes, int destination);
+    void playPlaylistIndex(int index);
+    void playPlaylistItemsNext(const QList<int> &indexes);
+    void shufflePlaylist();
+    void sortPlaylist(PlaylistSortOrder order);
+    void cyclePlaylistLoopMode();
 
     void seekPercent(double percent, bool forceExact = false);
     void seekRelative(double seconds, bool exact = false);
@@ -55,6 +65,7 @@ signals:
     void videoSizeChanged(int width, int height);
     void seekingChanged(bool seeking);
     void bufferingChanged(const BufferingInfo &buffering);
+    void playlistChanged(const PlaylistState &playlist);
     void eofChanged(bool reached);
     void mediaLoaded(const QUrl &url);
     void mediaEnded(const MpvEndFileInfo &info);
@@ -82,6 +93,7 @@ private:
     void openPrimaryUrl(const QUrl &url);
     void finishLoadingWhenReady();
     void setBufferingInfo(const BufferingInfo &buffering);
+    void synchronizePlaylist(const QVariant &nativePlaylist = {});
     void setEofReached(bool reached);
     void resetTransientPlaybackInfo();
     void resynchronizeFromMpv();

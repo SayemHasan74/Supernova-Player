@@ -37,6 +37,7 @@ qt_add_executable(Supernova WIN32
     src/PlayerCore/PlayerState.h
     src/PlayerCore/BufferingInfo.h
     src/PlayerCore/PlaybackInfo.h
+    src/PlayerCore/PlaylistState.h
     src/PlayerCore/PlayerCore.h
     src/PlayerCore/PlayerCore.cpp
     src/UI/Design/DesignTokens.h
@@ -46,6 +47,8 @@ qt_add_executable(Supernova WIN32
     src/UI/Controls/IinaPlayerChrome.cpp
     src/UI/Controls/PlaybackFeedback.h
     src/UI/Controls/PlaybackFeedback.cpp
+    src/UI/Playlist/PlaylistPanel.h
+    src/UI/Playlist/PlaylistPanel.cpp
     src/UI/MainWindow/MainWindow.h
     src/UI/MainWindow/MainWindow.cpp
     resources/app.rc
@@ -237,8 +240,6 @@ if(BUILD_TESTING)
     target_link_libraries(
         SupernovaPlayerCommandTests PRIVATE
         Qt6::Core
-        Qt6::Gui
-        Qt6::Widgets
         Qt6::Test)
     set_target_properties(
         SupernovaPlayerCommandTests PROPERTIES

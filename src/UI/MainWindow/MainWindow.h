@@ -23,6 +23,7 @@ class BufferingIndicator;
 class MpvVideoSurface;
 class PlayerCore;
 class ProgressOnlyBar;
+class PlaylistPanel;
 class QMenu;
 enum class PlayerCommand;
 
@@ -40,6 +41,7 @@ public slots:
     void toggleFullScreen();
     void toggleProgressMode();
     void pauseAndMinimize();
+    void togglePlaylist();
 
 signals:
     void renderContextReady();
@@ -77,6 +79,7 @@ private:
     [[nodiscard]] QMenu *menuForCommand(PlayerCommand command) const;
     void openFiles();
     void openFolder();
+    void addFilesToPlaylist();
     void requestOpen(const QList<QUrl> &urls);
     void restoreAfterMinimize();
     void revealPlayerChrome(bool animated = true);
@@ -97,6 +100,7 @@ private:
     PlaybackOsd *m_playbackOsd = nullptr;
     TimelinePreview *m_timelinePreview = nullptr;
     BufferingIndicator *m_bufferingIndicator = nullptr;
+    PlaylistPanel *m_playlistPanel = nullptr;
     ProgressOnlyBar *m_progressBar = nullptr;
     QStackedLayout *m_contentLayout = nullptr;
     QTimer *m_chromeAutoHideTimer = nullptr;
@@ -118,4 +122,5 @@ private:
     bool m_closePending = false;
     bool m_resumeAfterWheelSeek = false;
     bool m_ignoreNextLeftRelease = false;
+    bool m_playlistWasVisibleBeforeProgress = false;
 };

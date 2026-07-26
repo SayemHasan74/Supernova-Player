@@ -281,6 +281,218 @@ void PlayerCore::navigateInPlaylist(bool nextMedia)
                    : QStringLiteral("playlist-prev")});
 }
 
+void PlayerCore::appendToPlaylist(
+    const QList<QUrl> &urls, int index)
+{
+    if (!canAccessMpv() || urls.isEmpty()) {
+        return;
+    }
+    if (m_info.state == PlayerState::Idle
+        && m_info.playlist.isEmpty()) {
+        openUrls(urls);
+        return;
+    }
+    const int previousCount = m_info.playlist.size();
+    int appended = 0;
+    for (const QUrl &url : urls) {
+        if (!url.isValid() || url.isEmpty()) {
+            continue;
+        }
+        const QString source =
+            url.isLocalFile() ? url.toLocalFile()
+                              : url.toString(QUrl::FullyEncoded);
+        m_mpv->command(
+            {QStringLiteral("loadfile"), source,
+             QStringLiteral("append")});
+        ++appended;
+    }
+    if (index >= 0 && index <= previousCount) {
+        for (int offset = 0; offset < appended; ++offset) {
+            m_mpv->command(
+                {QStringLiteral("playlist-move"),
+                 QString::number(previousCount + offset),
+                 QString::number(index + offset)});
+        }
+    }
+}
+
+void PlayerCore::removePlaylistItems(const QList<int> &indexes)
+{
+    QList<int> sorted = indexes;
+    std::sort(sorted.begin(), sorted.end());
+    sorted.erase(std::unique(sorted.begin(), sorted.end()), sorted.end());
+    int removed = 0;
+    for (int index : std::as_const(sorted)) {
+        if (index < 0 || index >= m_info.playlist.size()) {
+            continue;
+        }
+        m_mpv->command(
+            {QStringLiteral("playlist-remove"),
+             QString::number(index - removed)});
+        ++removed;
+    }
+}
+
+void PlayerCore::clearPlaylist()
+{
+    if (canAccessMpv()) {
+        m_mpv->command({QStringLiteral("playlist-clear")});
+    }
+}
+
+void PlayerCore::movePlaylistItems(
+    const QList<int> &indexes, int destination)
+{
+    const QList<PlaylistItem> original = m_info.playlist.items;
+    if (original.size() < 2) {
+        return;
+    }
+    QList<int> selected = indexes;
+    std::sort(selected.begin(), selected.end());
+    selected.erase(
+        std::remove_if(
+            selected.begin(), selected.end(),
+            [size = original.size()](int value) {
+                return value < 0 || value >= size;
+            }),
+        selected.end());
+    selected.erase(
+        std::unique(selected.begin(), selected.end()), selected.end());
+    if (selected.isEmpty()) {
+        return;
+    }
+
+    QList<PlaylistItem> target = original;
+    QList<PlaylistItem> moving;
+    for (int index : std::as_const(selected)) {
+        moving.append(original[index]);
+    }
+    for (auto it = selected.crbegin(); it != selected.crend(); ++it) {
+        target.removeAt(*it);
+    }
+    int adjusted = std::clamp(
+        destination, 0, static_cast<int>(original.size()));
+    for (int index : std::as_const(selected)) {
+        if (index < destination) {
+            --adjusted;
+        }
+    }
+    adjusted = std::clamp(
+        adjusted, 0, static_cast<int>(target.size()));
+    for (int offset = 0; offset < moving.size(); ++offset) {
+        target.insert(adjusted + offset, moving[offset]);
+    }
+
+    QList<PlaylistItem> simulated = original;
+    for (int targetIndex = 0; targetIndex < target.size(); ++targetIndex) {
+        int sourceIndex = targetIndex;
+        while (sourceIndex < simulated.size()
+               && simulated[sourceIndex].id != target[targetIndex].id) {
+            ++sourceIndex;
+        }
+        if (sourceIndex <= targetIndex || sourceIndex >= simulated.size()) {
+            continue;
+        }
+        m_mpv->command(
+            {QStringLiteral("playlist-move"),
+             QString::number(sourceIndex),
+             QString::number(targetIndex)});
+        simulated.move(sourceIndex, targetIndex);
+    }
+}
+
+void PlayerCore::playPlaylistIndex(int index)
+{
+    if (index < 0 || index >= m_info.playlist.size()) {
+        return;
+    }
+    if (!m_mpv->getFlag(QStringLiteral("pause"))) {
+        m_mpv->setFlag(QStringLiteral("pause"), true);
+    }
+    m_info.justOpenedFile = true;
+    setState(PlayerState::Loading);
+    m_mpv->command(
+        {QStringLiteral("playlist-play-index"),
+         QString::number(index)});
+}
+
+void PlayerCore::playPlaylistItemsNext(const QList<int> &indexes)
+{
+    if (m_info.playlist.currentIndex < 0) {
+        return;
+    }
+    movePlaylistItems(indexes, m_info.playlist.currentIndex + 1);
+}
+
+void PlayerCore::shufflePlaylist()
+{
+    if (m_info.playlist.size() < 2) {
+        return;
+    }
+    m_mpv->command(
+        {m_info.playlist.shuffled
+             ? QStringLiteral("playlist-unshuffle")
+             : QStringLiteral("playlist-shuffle")});
+    m_info.playlist.shuffled = !m_info.playlist.shuffled;
+    emit playlistChanged(m_info.playlist);
+}
+
+void PlayerCore::sortPlaylist(PlaylistSortOrder order)
+{
+    QList<PlaylistItem> target = m_info.playlist.items;
+    const bool byName =
+        order == PlaylistSortOrder::NameAscending
+        || order == PlaylistSortOrder::NameDescending;
+    const bool ascending =
+        order == PlaylistSortOrder::NameAscending
+        || order == PlaylistSortOrder::PathAscending;
+    std::stable_sort(
+        target.begin(), target.end(),
+        [byName, ascending](
+            const PlaylistItem &left, const PlaylistItem &right) {
+            const QString a =
+                byName ? left.displayName : left.url.toDisplayString();
+            const QString b =
+                byName ? right.displayName : right.url.toDisplayString();
+            const int result = QString::localeAwareCompare(a, b);
+            return ascending ? result < 0 : result > 0;
+        });
+    QList<PlaylistItem> simulated = m_info.playlist.items;
+    for (int targetIndex = 0; targetIndex < target.size(); ++targetIndex) {
+        int sourceIndex = targetIndex;
+        while (sourceIndex < simulated.size()
+               && simulated[sourceIndex].id != target[targetIndex].id) {
+            ++sourceIndex;
+        }
+        if (sourceIndex <= targetIndex || sourceIndex >= simulated.size()) {
+            continue;
+        }
+        m_mpv->command(
+            {QStringLiteral("playlist-move"),
+             QString::number(sourceIndex),
+             QString::number(targetIndex)});
+        simulated.move(sourceIndex, targetIndex);
+    }
+}
+
+void PlayerCore::cyclePlaylistLoopMode()
+{
+    PlaylistLoopMode next = PlaylistLoopMode::Off;
+    if (m_info.playlist.loopMode == PlaylistLoopMode::Off) {
+        next = PlaylistLoopMode::File;
+    } else if (m_info.playlist.loopMode == PlaylistLoopMode::File) {
+        next = PlaylistLoopMode::Playlist;
+    }
+    m_mpv->setString(
+        QStringLiteral("loop-file"),
+        next == PlaylistLoopMode::File
+            ? QStringLiteral("inf") : QStringLiteral("no"));
+    m_mpv->setString(
+        QStringLiteral("loop-playlist"),
+        next == PlaylistLoopMode::Playlist
+            ? QStringLiteral("inf") : QStringLiteral("no"));
+}
+
 void PlayerCore::seekPercent(double percent, bool forceExact)
 {
     if (!isLoaded(m_info.state)) {
@@ -482,6 +694,24 @@ void PlayerCore::onMpvPropertyChanged(
             buffering.cacheSpeedBytesPerSecond = rawInputRate;
         }
         setBufferingInfo(buffering);
+    } else if (name == QStringLiteral("playlist")) {
+        synchronizePlaylist(value);
+    } else if (name == QStringLiteral("playlist-pos")) {
+        const int position = value.toInt();
+        bool changed = m_info.playlist.currentIndex != position;
+        m_info.playlist.currentIndex = position;
+        for (int index = 0; index < m_info.playlist.size(); ++index) {
+            const bool current = index == position;
+            changed = changed
+                || m_info.playlist.items[index].current != current;
+            m_info.playlist.items[index].current = current;
+        }
+        if (changed) {
+            emit playlistChanged(m_info.playlist);
+        }
+    } else if (name == QStringLiteral("loop-file")
+               || name == QStringLiteral("loop-playlist")) {
+        synchronizePlaylist();
     }
 }
 
@@ -713,6 +943,69 @@ void PlayerCore::setBufferingInfo(
     emit bufferingChanged(m_info.buffering);
 }
 
+void PlayerCore::synchronizePlaylist(const QVariant &nativePlaylist)
+{
+    PlaylistState updated = m_info.playlist;
+    if (nativePlaylist.isValid()) {
+        updated.items.clear();
+        updated.currentIndex = -1;
+        const QVariantList entries = nativePlaylist.toList();
+        updated.items.reserve(entries.size());
+        for (int index = 0; index < entries.size(); ++index) {
+            const QVariantMap entry = entries[index].toMap();
+            const QString filename =
+                entry.value(QStringLiteral("filename")).toString();
+            if (filename.isEmpty()) {
+                continue;
+            }
+            PlaylistItem item;
+            item.id = entry.value(QStringLiteral("id"), index).toLongLong();
+            item.networkResource =
+                filename.contains(QStringLiteral("://"));
+            item.url = item.networkResource
+                ? QUrl::fromEncoded(filename.toUtf8())
+                : QUrl::fromLocalFile(filename);
+            item.title =
+                entry.value(QStringLiteral("title")).toString();
+            item.displayName = !item.title.isEmpty()
+                ? item.title
+                : (item.networkResource
+                       ? filename
+                       : QFileInfo(filename).fileName());
+            item.current =
+                entry.value(QStringLiteral("current")).toBool();
+            item.playing =
+                entry.value(QStringLiteral("playing")).toBool();
+            if (item.current) {
+                updated.currentIndex = updated.items.size();
+            }
+            updated.items.append(item);
+        }
+    }
+
+    const QString loopFile =
+        m_mpv->getString(QStringLiteral("loop-file"));
+    const QString loopPlaylist =
+        m_mpv->getString(QStringLiteral("loop-playlist"));
+    if (loopFile != QStringLiteral("no")
+        && loopFile != QStringLiteral("0")
+        && !loopFile.isEmpty()) {
+        updated.loopMode = PlaylistLoopMode::File;
+    } else if (loopPlaylist != QStringLiteral("no")
+               && loopPlaylist != QStringLiteral("1")
+               && !loopPlaylist.isEmpty()) {
+        updated.loopMode = PlaylistLoopMode::Playlist;
+    } else {
+        updated.loopMode = PlaylistLoopMode::Off;
+    }
+
+    if (updated == m_info.playlist) {
+        return;
+    }
+    m_info.playlist = std::move(updated);
+    emit playlistChanged(m_info.playlist);
+}
+
 void PlayerCore::setEofReached(bool reached)
 {
     if (m_info.eofReached == reached) {
@@ -750,6 +1043,10 @@ void PlayerCore::resetTransientPlaybackInfo()
     m_info.videoHeight = 0;
     m_info.videoPositionSec = 0.0;
     m_info.videoDurationSec = 0.0;
+    if (!m_info.playlist.isEmpty()) {
+        m_info.playlist = {};
+        emit playlistChanged(m_info.playlist);
+    }
     emit videoSizeChanged(0, 0);
     emit positionChanged(0.0);
     emit durationChanged(0.0);
@@ -810,6 +1107,27 @@ void PlayerCore::resynchronizeFromMpv()
             m_mpv->getFlag(QStringLiteral("demuxer-cache-idle"));
     }
     setBufferingInfo(buffering);
+    QVariantList nativePlaylist;
+    const int playlistCount = std::max(
+        0, static_cast<int>(
+               m_mpv->getInt(QStringLiteral("playlist-count"))));
+    nativePlaylist.reserve(playlistCount);
+    for (int index = 0; index < playlistCount; ++index) {
+        const QString prefix =
+            QStringLiteral("playlist/%1/").arg(index);
+        nativePlaylist.append(QVariantMap{
+            {QStringLiteral("id"),
+             m_mpv->getInt(prefix + QStringLiteral("id"))},
+            {QStringLiteral("filename"),
+             m_mpv->getString(prefix + QStringLiteral("filename"))},
+            {QStringLiteral("title"),
+             m_mpv->getString(prefix + QStringLiteral("title"))},
+            {QStringLiteral("current"),
+             m_mpv->getFlag(prefix + QStringLiteral("current"))},
+            {QStringLiteral("playing"),
+             m_mpv->getFlag(prefix + QStringLiteral("playing"))}});
+    }
+    synchronizePlaylist(nativePlaylist);
     emit positionChanged(m_info.videoPositionSec);
     emit durationChanged(m_info.videoDurationSec);
     emit seekingChanged(m_info.isSeeking);

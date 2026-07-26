@@ -393,6 +393,10 @@ MpvCore::MpvCore(QObject *parent)
             QStringLiteral("demuxer-via-network"),
             MPV_FORMAT_FLAG);
         observe(QStringLiteral("seeking"), MPV_FORMAT_FLAG);
+        observe(QStringLiteral("playlist"), MPV_FORMAT_NODE);
+        observe(QStringLiteral("playlist-pos"), MPV_FORMAT_INT64);
+        observe(QStringLiteral("loop-file"), MPV_FORMAT_STRING);
+        observe(QStringLiteral("loop-playlist"), MPV_FORMAT_STRING);
 
         requireInitializationStep(
             mpv_initialize(m_mpv), "mpv_initialize failed");

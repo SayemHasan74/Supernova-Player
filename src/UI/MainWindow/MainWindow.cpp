@@ -7,6 +7,7 @@
 #include "UI/Controls/IinaPlayerChrome.h"
 #include "UI/Controls/PlaybackFeedback.h"
 #include "UI/Commands/PlayerCommand.h"
+#include "UI/Playlist/PlaylistPanel.h"
 #include "UI/Design/DesignTokens.h"
 
 #include <QAction>
@@ -236,6 +237,21 @@ void MainWindow::pauseAndMinimize()
     m_restoreMaximizedAfterMinimize =
         !m_restoreFullScreenAfterMinimize && isMaximized();
     showMinimized();
+}
+
+void MainWindow::togglePlaylist()
+{
+    if (!m_playlistPanel || m_progressMode) {
+        return;
+    }
+    m_playlistPanel->setVisible(!m_playlistPanel->isVisible());
+    if (m_playlistPanel->isVisible()) {
+        m_playlistPanel->setPlaylist(m_playerCore->info().playlist);
+        m_playlistPanel->raise();
+    }
+    positionPlayerChrome();
+    positionPlaybackFeedback();
+    updateCommandStates();
 }
 
 void MainWindow::changeEvent(QEvent *event)
@@ -584,6 +600,7 @@ void MainWindow::setupWindowChrome()
     m_timelinePreview = new TimelinePreview(m_playbackPage);
     m_bufferingIndicator =
         new BufferingIndicator(m_playbackPage);
+    m_playlistPanel = new PlaylistPanel(m_playbackPage);
     connect(
         m_playerChrome, &IinaPlayerChrome::previewRequested,
         this, [this](double seconds, const QPoint &globalAnchor) {
@@ -606,6 +623,30 @@ void MainWindow::setupWindowChrome()
             m_bufferingIndicator->updateStatus(
                 m_playerCore->info().buffering, seeking);
         });
+    connect(m_playerCore, &PlayerCore::playlistChanged,
+            m_playlistPanel, &PlaylistPanel::setPlaylist);
+    connect(m_playlistPanel, &PlaylistPanel::closeRequested,
+            this, &MainWindow::togglePlaylist);
+    connect(m_playlistPanel, &PlaylistPanel::addRequested,
+            this, &MainWindow::addFilesToPlaylist);
+    connect(m_playlistPanel, &PlaylistPanel::removeRequested,
+            m_playerCore, &PlayerCore::removePlaylistItems);
+    connect(m_playlistPanel, &PlaylistPanel::clearRequested,
+            m_playerCore, &PlayerCore::clearPlaylist);
+    connect(m_playlistPanel, &PlaylistPanel::playRequested,
+            m_playerCore, &PlayerCore::playPlaylistIndex);
+    connect(m_playlistPanel, &PlaylistPanel::playNextRequested,
+            m_playerCore, &PlayerCore::playPlaylistItemsNext);
+    connect(m_playlistPanel, &PlaylistPanel::moveRequested,
+            m_playerCore, &PlayerCore::movePlaylistItems);
+    connect(m_playlistPanel, &PlaylistPanel::urlsDropped,
+            m_playerCore, &PlayerCore::appendToPlaylist);
+    connect(m_playlistPanel, &PlaylistPanel::loopRequested,
+            m_playerCore, &PlayerCore::cyclePlaylistLoopMode);
+    connect(m_playlistPanel, &PlaylistPanel::shuffleRequested,
+            m_playerCore, &PlayerCore::shufflePlaylist);
+    connect(m_playlistPanel, &PlaylistPanel::sortRequested,
+            m_playerCore, &PlayerCore::sortPlaylist);
 
     m_chromeAutoHideTimer = new QTimer(this);
     m_chromeAutoHideTimer->setSingleShot(true);
@@ -665,7 +706,13 @@ void MainWindow::setupMenus()
         action->setObjectName(
             QStringLiteral("playerCommand_%1")
                 .arg(static_cast<int>(definition.command)));
-        action->setShortcuts(definition.shortcuts);
+        QList<QKeySequence> shortcuts;
+        shortcuts.reserve(definition.shortcuts.size());
+        for (const QString &shortcut : definition.shortcuts) {
+            shortcuts.append(QKeySequence::fromString(
+                shortcut, QKeySequence::PortableText));
+        }
+        action->setShortcuts(shortcuts);
         action->setShortcutContext(Qt::WindowShortcut);
         action->setShortcutVisibleInContextMenu(true);
         action->setCheckable(definition.checkable);
@@ -785,6 +832,9 @@ void MainWindow::executeCommand(PlayerCommand command)
     case PlayerCommand::ToggleProgressMode:
         toggleProgressMode();
         break;
+    case PlayerCommand::TogglePlaylist:
+        togglePlaylist();
+        break;
     case PlayerCommand::PauseAndMinimize:
         pauseAndMinimize();
         break;
@@ -824,6 +874,12 @@ void MainWindow::updateCommandStates()
     if (QAction *progress =
             m_commandActions.value(PlayerCommand::ToggleProgressMode)) {
         progress->setChecked(m_progressMode);
+    }
+    if (QAction *playlist =
+            m_commandActions.value(PlayerCommand::TogglePlaylist)) {
+        playlist->setChecked(
+            m_playlistPanel && m_playlistPanel->isVisible());
+        playlist->setEnabled(!m_progressMode);
     }
     if (QAction *onTop =
             m_commandActions.value(PlayerCommand::ToggleAlwaysOnTop)) {
@@ -872,6 +928,21 @@ void MainWindow::openFolder()
     requestOpen(
         MediaSourceResolver::resolve(
             {QUrl::fromLocalFile(path)}));
+}
+
+void MainWindow::addFilesToPlaylist()
+{
+    const QStringList paths = QFileDialog::getOpenFileNames(
+        this, tr("Add Media to Playlist"),
+        m_lastOpenDirectory.isEmpty()
+            ? QDir::homePath() : m_lastOpenDirectory,
+        MediaSourceResolver::mediaDialogFilter());
+    if (paths.isEmpty()) {
+        return;
+    }
+    m_lastOpenDirectory = QFileInfo(paths.constFirst()).absolutePath();
+    m_playerCore->appendToPlaylist(
+        MediaSourceResolver::fromUserInputs(paths));
 }
 
 void MainWindow::requestOpen(const QList<QUrl> &urls)
@@ -923,6 +994,11 @@ void MainWindow::enterProgressMode()
     }
 
     m_progressMode = true;
+    m_playlistWasVisibleBeforeProgress =
+        m_playlistPanel && m_playlistPanel->isVisible();
+    if (m_playlistPanel) {
+        m_playlistPanel->hide();
+    }
     updateCommandStates();
     if (m_playbackOsd) {
         m_playbackOsd->hideNow();
@@ -1021,6 +1097,10 @@ void MainWindow::exitProgressMode()
     setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
     setMinimumSize(480, 270);
     m_contentLayout->setCurrentWidget(m_playbackPage);
+    if (m_playlistWasVisibleBeforeProgress && m_playlistPanel) {
+        m_playlistPanel->show();
+    }
+    m_playlistWasVisibleBeforeProgress = false;
     showNormal();
 
     if (restoreFullScreen) {
@@ -1185,7 +1265,11 @@ void MainWindow::positionPlayerChrome()
     if (!m_playerChrome || !m_playbackPage || m_progressMode) {
         return;
     }
-    const int availableWidth = m_playbackPage->width();
+    const int panelWidth =
+        m_playlistPanel && m_playlistPanel->isVisible()
+            ? m_playlistPanel->width() : 0;
+    const int availableWidth =
+        std::max(1, m_playbackPage->width() - panelWidth);
     const int availableHeight = m_playbackPage->height();
     const int width = std::clamp(
         availableWidth - 2 * Supernova::Ui::floatingControlEdgeMargin,
@@ -1205,6 +1289,9 @@ void MainWindow::positionPlayerChrome()
     m_playerChrome->setGeometry(
         x, y, width, Supernova::Ui::floatingControlHeight);
     m_playerChrome->raise();
+    if (m_playlistPanel && m_playlistPanel->isVisible()) {
+        m_playlistPanel->raise();
+    }
 }
 
 void MainWindow::positionPlaybackFeedback()
@@ -1225,6 +1312,16 @@ void MainWindow::positionPlaybackFeedback()
                          - m_bufferingIndicator->width()) / 2),
             std::max(0, (m_playbackPage->height()
                          - m_bufferingIndicator->height()) / 2));
+    }
+    if (m_playlistPanel) {
+        const int width = std::clamp(
+            m_playbackPage->width() / 3, 285, 370);
+        m_playlistPanel->setGeometry(
+            std::max(0, m_playbackPage->width() - width),
+            0, width, m_playbackPage->height());
+        if (m_playlistPanel->isVisible()) {
+            m_playlistPanel->raise();
+        }
     }
 }
 
@@ -1252,6 +1349,7 @@ void MainWindow::beginShutdown()
     m_playbackOsd = nullptr;
     m_timelinePreview = nullptr;
     m_bufferingIndicator = nullptr;
+    m_playlistPanel = nullptr;
     m_progressBar = nullptr;
     m_contentLayout = nullptr;
     m_playerCore->shutdown();

@@ -52,6 +52,8 @@ private slots:
     void bufferingMetricsRemainOrthogonalToPlaybackState();
     void loadErrorsAreReportedAfterIdle();
     void realMediaReachesEofAndRestarts();
+    void nativePlaylistBuildsAuthoritativeQueueState();
+    void realPlaylistSupportsPlayRemoveAndClear();
 };
 
 void PlayerCoreLifecycleTests::initTestCase()
@@ -59,6 +61,7 @@ void PlayerCoreLifecycleTests::initTestCase()
     qRegisterMetaType<PlayerState>();
     qRegisterMetaType<BufferingInfo>();
     qRegisterMetaType<MpvEndFileInfo>();
+    qRegisterMetaType<PlaylistState>();
 }
 
 void PlayerCoreLifecycleTests::replacementStopKeepsTheNewLoadActive()
@@ -212,6 +215,73 @@ void PlayerCoreLifecycleTests::realMediaReachesEofAndRestarts()
     QTRY_COMPARE_WITH_TIMEOUT(
         core.info().state, PlayerState::Playing, 5000);
     QVERIFY(eofSpy.count() >= 2);
+}
+
+void PlayerCoreLifecycleTests::
+    nativePlaylistBuildsAuthoritativeQueueState()
+{
+    PlayerCore core;
+    QSignalSpy playlistSpy(&core, &PlayerCore::playlistChanged);
+    const QVariantList native{
+        QVariantMap{
+            {QStringLiteral("id"), qint64(41)},
+            {QStringLiteral("filename"), QStringLiteral("C:/Media/one.mkv")},
+            {QStringLiteral("current"), true},
+            {QStringLiteral("playing"), true}},
+        QVariantMap{
+            {QStringLiteral("id"), qint64(42)},
+            {QStringLiteral("filename"), QStringLiteral("https://example.com/two")},
+            {QStringLiteral("title"), QStringLiteral("Remote Two")}}};
+
+    core.onMpvPropertyChanged(QStringLiteral("playlist"), native);
+
+    QCOMPARE(core.info().playlist.size(), 2);
+    QCOMPARE(core.info().playlist.currentIndex, 0);
+    QCOMPARE(core.info().playlist.items[0].id, qint64(41));
+    QCOMPARE(
+        core.info().playlist.items[0].displayName,
+        QStringLiteral("one.mkv"));
+    QVERIFY(core.info().playlist.items[0].current);
+    QVERIFY(core.info().playlist.items[1].networkResource);
+    QCOMPARE(
+        core.info().playlist.items[1].displayName,
+        QStringLiteral("Remote Two"));
+    QCOMPARE(playlistSpy.count(), 1);
+}
+
+void PlayerCoreLifecycleTests::realPlaylistSupportsPlayRemoveAndClear()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QList<QUrl> urls;
+    for (int index = 1; index <= 3; ++index) {
+        const QString path = directory.filePath(
+            QStringLiteral("track%1.wav").arg(index));
+        QVERIFY(createSilentWaveFile(path));
+        urls.append(QUrl::fromLocalFile(path));
+    }
+
+    PlayerCore core;
+    core.m_mpv->setString(
+        QStringLiteral("ao"), QStringLiteral("null"));
+    core.m_mpv->setFlag(QStringLiteral("mute"), true);
+    QSignalSpy playlistSpy(&core, &PlayerCore::playlistChanged);
+    core.openUrls(urls);
+
+    QTRY_COMPARE_WITH_TIMEOUT(core.info().playlist.size(), 3, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(core.info().playlist.currentIndex, 0, 5000);
+
+    core.playPlaylistIndex(2);
+    QTRY_COMPARE_WITH_TIMEOUT(core.info().playlist.currentIndex, 2, 5000);
+
+    core.removePlaylistItems({0});
+    QTRY_COMPARE_WITH_TIMEOUT(core.info().playlist.size(), 2, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(core.info().playlist.currentIndex, 1, 5000);
+
+    core.clearPlaylist();
+    QTRY_COMPARE_WITH_TIMEOUT(core.info().playlist.size(), 1, 5000);
+    QCOMPARE(core.info().playlist.currentIndex, 0);
+    QVERIFY(playlistSpy.count() >= 3);
 }
 
 QTEST_GUILESS_MAIN(PlayerCoreLifecycleTests)
