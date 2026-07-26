@@ -337,6 +337,18 @@ void MainWindow::dropEvent(QDropEvent *event)
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 {
+    QWidget *watchedWidget = qobject_cast<QWidget *>(watched);
+    const bool isPlaybackUi =
+        watchedWidget
+        && (watchedWidget == m_playbackPage
+            || watchedWidget == m_videoSurface
+            || watchedWidget == m_playerChrome
+            || (m_playbackPage
+                && m_playbackPage->isAncestorOf(watchedWidget)));
+    const bool isPlaylistUi =
+        watchedWidget && m_playlistPanel
+        && (watchedWidget == m_playlistPanel
+            || m_playlistPanel->isAncestorOf(watchedWidget));
     const bool isPlayerSurface =
         watched == m_videoSurface || watched == m_progressBar;
     if (isPlayerSurface
@@ -395,7 +407,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
                 QApplication::doubleClickInterval());
         }
     }
-    if (watched == m_videoSurface
+    if (isPlaybackUi && !isPlaylistUi
         && event->type() == QEvent::ContextMenu) {
         auto *contextEvent = static_cast<QContextMenuEvent *>(event);
         updateCommandStates();
@@ -594,6 +606,8 @@ void MainWindow::setupWindowChrome()
             this, [this] { revealPlayerChrome(); });
     connect(m_playerChrome, &IinaPlayerChrome::fullScreenRequested,
             this, &MainWindow::toggleFullScreen);
+    connect(m_playerChrome, &IinaPlayerChrome::playlistRequested,
+            this, &MainWindow::togglePlaylist);
     connect(m_playerChrome, &IinaPlayerChrome::progressModeRequested,
             this, &MainWindow::toggleProgressMode);
     connect(m_playerChrome, &IinaPlayerChrome::osdRequested,
@@ -660,6 +674,23 @@ void MainWindow::setupWindowChrome()
             m_playerCore, &PlayerCore::shufflePlaylist);
     connect(m_playlistPanel, &PlaylistPanel::sortRequested,
             m_playerCore, &PlayerCore::sortPlaylist);
+
+    // Route input from every playback overlay through the same window-level
+    // handler. In fullscreen the floating chrome can be the mouse target
+    // instead of the video widget; IINA likewise handles right mouse at the
+    // player-window level so behavior does not depend on the current mode.
+    m_playbackPage->installEventFilter(this);
+    const auto playbackWidgets =
+        m_playbackPage->findChildren<QWidget *>();
+    for (QWidget *widget : playbackWidgets) {
+        const bool belongsToPlaylist =
+            widget == m_playlistPanel
+            || (m_playlistPanel
+                && m_playlistPanel->isAncestorOf(widget));
+        if (!belongsToPlaylist) {
+            widget->installEventFilter(this);
+        }
+    }
 
     m_chromeAutoHideTimer = new QTimer(this);
     m_chromeAutoHideTimer->setSingleShot(true);

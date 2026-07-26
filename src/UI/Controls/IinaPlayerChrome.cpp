@@ -101,6 +101,16 @@ QPainterPath iconPath(IinaIcon icon, const QRectF &bounds)
             }
         }
         break;
+    case IinaIcon::Playlist:
+        for (int row = -1; row <= 1; ++row) {
+            const qreal y = center.y() + row * 4.0 * unit;
+            path.addEllipse(
+                QPointF(center.x() - 5.6 * unit, y),
+                0.9 * unit, 0.9 * unit);
+            path.moveTo(center.x() - 2.8 * unit, y);
+            path.lineTo(center.x() + 6.0 * unit, y);
+        }
+        break;
     case IinaIcon::FullScreen:
     case IinaIcon::ExitFullScreen: {
         const bool inward = icon == IinaIcon::ExitFullScreen;
@@ -430,6 +440,15 @@ IinaPlayerChrome::IinaPlayerChrome(
     controls->addWidget(m_nextButton);
     controls->addStretch(1);
 
+    m_playlistButton =
+        new IinaIconButton(IinaIcon::Playlist, this);
+    m_playlistButton->setObjectName(
+        QStringLiteral("playlistButton"));
+    m_playlistButton->setFixedSize(
+        compactButtonExtent, compactButtonExtent);
+    m_playlistButton->setToolTip(tr("Show Playlist"));
+    controls->addWidget(m_playlistButton);
+
     m_fullScreenButton =
         new IinaIconButton(IinaIcon::FullScreen, this);
     m_fullScreenButton->setObjectName(QStringLiteral("fullScreenButton"));
@@ -488,6 +507,8 @@ IinaPlayerChrome::IinaPlayerChrome(
             });
     connect(m_fullScreenButton, &QAbstractButton::clicked,
             this, &IinaPlayerChrome::fullScreenRequested);
+    connect(m_playlistButton, &QAbstractButton::clicked,
+            this, &IinaPlayerChrome::playlistRequested);
     connect(m_previousButton, &QAbstractButton::clicked,
             m_playerCore, [this] {
                 m_playerCore->navigateInPlaylist(false);
@@ -503,6 +524,8 @@ IinaPlayerChrome::IinaPlayerChrome(
     connect(m_muteButton, &QAbstractButton::clicked,
             this, &IinaPlayerChrome::activity);
     connect(m_fullScreenButton, &QAbstractButton::clicked,
+            this, &IinaPlayerChrome::activity);
+    connect(m_playlistButton, &QAbstractButton::clicked,
             this, &IinaPlayerChrome::activity);
     connect(m_timeline, &IinaTimeline::seekRequested,
             m_playerCore, [this](double percent) {
@@ -719,6 +742,7 @@ void IinaPlayerChrome::updatePlaybackState()
     m_playButton->setEnabled(loaded);
     m_previousButton->setEnabled(loaded);
     m_nextButton->setEnabled(loaded);
+    m_playlistButton->setEnabled(true);
     m_timeline->setEnabled(loaded);
     m_muteButton->setVisible(true);
     m_volumeSlider->setVisible(true);

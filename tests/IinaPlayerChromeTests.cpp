@@ -17,6 +17,7 @@ private slots:
     void timelineMapsPointerToMediaPercent();
     void timelineSeekDoesNotCreateOsdMessage();
     void middleClickPassesThroughChromeControls();
+    void playlistButtonRequestsSidebar();
 };
 
 void IinaPlayerChromeTests::usesIinaFloatingGeometry()
@@ -42,6 +43,8 @@ void IinaPlayerChromeTests::exposesStableControlTopology()
         QStringLiteral("previousButton")));
     QVERIFY(chrome.findChild<IinaIconButton *>(
         QStringLiteral("nextButton")));
+    QVERIFY(chrome.findChild<IinaIconButton *>(
+        QStringLiteral("playlistButton")));
     QVERIFY(chrome.findChild<IinaIconButton *>(
         QStringLiteral("fullScreenButton")));
     QVERIFY(chrome.findChild<QSlider *>(
@@ -78,6 +81,21 @@ void IinaPlayerChromeTests::middleClickPassesThroughChromeControls()
         &chrome, &IinaPlayerChrome::progressModeRequested);
 
     QTest::mouseClick(playButton, Qt::MiddleButton);
+
+    QCOMPARE(spy.count(), 1);
+}
+
+void IinaPlayerChromeTests::playlistButtonRequestsSidebar()
+{
+    PlayerCore playerCore;
+    IinaPlayerChrome chrome(&playerCore);
+    auto *playlistButton = chrome.findChild<IinaIconButton *>(
+        QStringLiteral("playlistButton"));
+    QVERIFY(playlistButton);
+    QSignalSpy spy(
+        &chrome, &IinaPlayerChrome::playlistRequested);
+
+    QTest::mouseClick(playlistButton, Qt::LeftButton);
 
     QCOMPARE(spy.count(), 1);
 }
