@@ -40,6 +40,8 @@ qt_add_executable(Supernova WIN32
     src/PlayerCore/PlayerCore.h
     src/PlayerCore/PlayerCore.cpp
     src/UI/Design/DesignTokens.h
+    src/UI/Commands/PlayerCommand.h
+    src/UI/Commands/PlayerCommand.cpp
     src/UI/Controls/IinaPlayerChrome.h
     src/UI/Controls/IinaPlayerChrome.cpp
     src/UI/Controls/PlaybackFeedback.h
@@ -225,10 +227,30 @@ if(BUILD_TESTING)
         NAME IinaPlayerChrome
         COMMAND SupernovaIinaPlayerChromeTests)
 
+    qt_add_executable(SupernovaPlayerCommandTests
+        tests/PlayerCommandTests.cpp
+        src/UI/Commands/PlayerCommand.h
+        src/UI/Commands/PlayerCommand.cpp
+    )
+    target_include_directories(
+        SupernovaPlayerCommandTests PRIVATE src)
+    target_link_libraries(
+        SupernovaPlayerCommandTests PRIVATE
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Widgets
+        Qt6::Test)
+    set_target_properties(
+        SupernovaPlayerCommandTests PROPERTIES
+        WIN32_EXECUTABLE FALSE)
+    add_test(
+        NAME PlayerCommand
+        COMMAND SupernovaPlayerCommandTests)
+
     if(WIN32)
         set_tests_properties(
             MediaSourceResolver MpvCore PlayerCoreLifecycle
-            IinaPlayerChrome PROPERTIES
+            IinaPlayerChrome PlayerCommand PROPERTIES
             ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
     endif()

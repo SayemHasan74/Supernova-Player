@@ -1,14 +1,18 @@
 #include "UI/MainWindow/MainWindow.h"
 
 #include "App/MediaSourceResolver.h"
+#include "Mpv/MpvCore.h"
 #include "Mpv/MpvVideoSurface.h"
 #include "PlayerCore/PlayerCore.h"
 #include "UI/Controls/IinaPlayerChrome.h"
 #include "UI/Controls/PlaybackFeedback.h"
+#include "UI/Commands/PlayerCommand.h"
 #include "UI/Design/DesignTokens.h"
 
 #include <QAction>
+#include <QApplication>
 #include <QCloseEvent>
+#include <QContextMenuEvent>
 #include <QDir>
 #include <QDragEnterEvent>
 #include <QDropEvent>
@@ -23,11 +27,13 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QMouseEvent>
+#include <QNativeGestureEvent>
 #include <QPainter>
 #include <QPaintEvent>
 #include <QScreen>
 #include <QStackedLayout>
 #include <QTimer>
+#include <QWheelEvent>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -114,6 +120,7 @@ MainWindow::MainWindow(PlayerCore *playerCore, QWidget *parent)
 
     connect(m_playerCore, &PlayerCore::stateChanged, this,
             [this](PlayerState state) {
+                updateCommandStates();
                 if (!m_closePending) {
                     return;
                 }
@@ -158,7 +165,20 @@ MainWindow::MainWindow(PlayerCore *playerCore, QWidget *parent)
                         : tr("Fatal Playback Error — Supernova"));
             });
     connect(m_playerCore, &PlayerCore::mediaLoaded,
-            this, [this] { revealPlayerChrome(false); });
+            this, [this] {
+                updateCommandStates();
+                revealPlayerChrome(false);
+            });
+    connect(m_playerCore, &PlayerCore::playbackStopped,
+            this, &MainWindow::updateCommandStates);
+    connect(m_playerCore->mpvCore(), &MpvCore::propertyChanged,
+            this, [this](const QString &name, const QVariant &) {
+                if (name == QStringLiteral("mute")
+                    || name == QStringLiteral("volume")
+                    || name == QStringLiteral("speed")) {
+                    updateCommandStates();
+                }
+            });
 }
 
 MainWindow::~MainWindow()
@@ -308,6 +328,18 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
             mouseEvent->accept();
             return true;
         }
+        if (watched == m_videoSurface
+            && mouseEvent->button() == Qt::BackButton) {
+            executeCommand(PlayerCommand::PreviousMedia);
+            mouseEvent->accept();
+            return true;
+        }
+        if (watched == m_videoSurface
+            && mouseEvent->button() == Qt::ForwardButton) {
+            executeCommand(PlayerCommand::NextMedia);
+            mouseEvent->accept();
+            return true;
+        }
         if (watched == m_progressBar
             && mouseEvent->button() == Qt::LeftButton) {
             m_playerCore->seekPercent(
@@ -323,10 +355,135 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         && event->type() == QEvent::MouseButtonDblClick) {
         auto *mouseEvent = static_cast<QMouseEvent *>(event);
         if (mouseEvent->button() == Qt::LeftButton) {
+            if (m_singleClickTimer) {
+                m_singleClickTimer->stop();
+            }
+            m_ignoreNextLeftRelease = true;
             toggleFullScreen();
             mouseEvent->accept();
             return true;
         }
+    }
+    if (watched == m_videoSurface
+        && event->type() == QEvent::MouseButtonRelease) {
+        auto *mouseEvent = static_cast<QMouseEvent *>(event);
+        if (mouseEvent->button() == Qt::LeftButton
+            && m_ignoreNextLeftRelease) {
+            m_ignoreNextLeftRelease = false;
+        } else if (mouseEvent->button() == Qt::LeftButton
+            && m_singleClickTimer) {
+            m_singleClickTimer->start(
+                QApplication::doubleClickInterval());
+        }
+    }
+    if (watched == m_videoSurface
+        && event->type() == QEvent::ContextMenu) {
+        auto *contextEvent = static_cast<QContextMenuEvent *>(event);
+        updateCommandStates();
+        m_playbackContextMenu->popup(contextEvent->globalPos());
+        contextEvent->accept();
+        return true;
+    }
+    if (watched == m_videoSurface
+        && event->type() == QEvent::Wheel) {
+        auto *wheelEvent = static_cast<QWheelEvent *>(event);
+        if (!isLoaded(m_playerCore->info().state)) {
+            return false;
+        }
+
+        if (wheelEvent->phase() == Qt::ScrollEnd) {
+            if (m_resumeAfterWheelSeek) {
+                m_playerCore->resume();
+                m_resumeAfterWheelSeek = false;
+            }
+            wheelEvent->accept();
+            return true;
+        }
+
+        const QPoint pixels = wheelEvent->pixelDelta();
+        const QPoint angles = wheelEvent->angleDelta();
+        const double x = !pixels.isNull()
+            ? pixels.x() / 40.0 : angles.x() / 120.0;
+        const double y = !pixels.isNull()
+            ? pixels.y() / 40.0 : angles.y() / 120.0;
+        const bool horizontal =
+            wheelEvent->modifiers().testFlag(Qt::ShiftModifier)
+            || std::abs(x) > std::abs(y);
+        if (horizontal) {
+            if (wheelEvent->phase() == Qt::ScrollBegin
+                && m_playerCore->info().state == PlayerState::Playing) {
+                m_resumeAfterWheelSeek = true;
+                m_playerCore->pause();
+            }
+            double delta = std::abs(x) > std::abs(y) ? x : y;
+            if (wheelEvent->inverted()) {
+                delta = -delta;
+            }
+            if (std::abs(delta) > 0.001) {
+                m_playerCore->seekRelative(delta * 3.0, false);
+            }
+        } else {
+            double delta = y;
+            if (wheelEvent->inverted()) {
+                delta = -delta;
+            }
+            if (std::abs(delta) > 0.001) {
+                m_playerCore->setVolume(
+                    m_playerCore->info().volume + delta * 3.0);
+            }
+        }
+        wheelEvent->accept();
+        return true;
+    }
+    if (watched == m_videoSurface
+        && event->type() == QEvent::NativeGesture) {
+        auto *gesture = static_cast<QNativeGestureEvent *>(event);
+        switch (gesture->gestureType()) {
+        case Qt::BeginNativeGesture:
+            break;
+        case Qt::ZoomNativeGesture:
+            if (!isFullScreenMode() && !m_progressMode) {
+                const double factor =
+                    std::clamp(1.0 + gesture->value(), 0.85, 1.15);
+                QSize target(
+                    qRound(width() * factor),
+                    qRound(height() * factor));
+                target = target.expandedTo(minimumSize());
+                if (QScreen *targetScreen = screen()) {
+                    target = target.boundedTo(
+                        targetScreen->availableGeometry().size());
+                }
+                resize(target);
+            }
+            break;
+        case Qt::SmartZoomNativeGesture:
+            toggleFullScreen();
+            break;
+        case Qt::PanNativeGesture: {
+            const QPointF delta = gesture->delta();
+            if (std::abs(delta.x()) > std::abs(delta.y())) {
+                m_playerCore->seekRelative(delta.x() * 0.15, false);
+            } else {
+                m_playerCore->setVolume(
+                    m_playerCore->info().volume - delta.y() * 0.1);
+            }
+            break;
+        }
+        case Qt::SwipeNativeGesture: {
+            const double horizontal =
+                std::abs(gesture->delta().x()) > 0.001
+                ? gesture->delta().x() : gesture->value();
+            if (std::abs(horizontal) > 0.001) {
+                m_playerCore->seekRelative(
+                    horizontal > 0.0 ? 10.0 : -10.0, false);
+            }
+            break;
+        }
+        default:
+            break;
+        }
+        gesture->accept();
+        return true;
     }
     if (watched == m_videoSurface
         && (event->type() == QEvent::MouseMove
@@ -360,7 +517,7 @@ bool MainWindow::nativeEvent(
 
 void MainWindow::keyPressEvent(QKeyEvent *event)
 {
-    handleKeyPress(event);
+    QMainWindow::keyPressEvent(event);
 }
 
 void MainWindow::resizeEvent(QResizeEvent *event)
@@ -368,53 +525,6 @@ void MainWindow::resizeEvent(QResizeEvent *event)
     QMainWindow::resizeEvent(event);
     positionPlayerChrome();
     positionPlaybackFeedback();
-}
-
-void MainWindow::handleKeyPress(QKeyEvent *event)
-{
-    switch (event->key()) {
-    case Qt::Key_Space:
-        showPlaybackOsd(
-            m_playerCore->info().state == PlayerState::Paused
-                ? tr("Play") : tr("Pause"),
-            QString(),
-            m_playerCore->info().videoDurationSec > 0.0
-                ? m_playerCore->info().videoPositionSec
-                    / m_playerCore->info().videoDurationSec
-                : -1.0);
-        m_playerCore->togglePause();
-        event->accept();
-        return;
-    case Qt::Key_Left:
-        showPlaybackOsd(
-            tr("Seek Backward 5 Seconds"),
-            QString(),
-            m_playerCore->info().videoDurationSec > 0.0
-                ? std::clamp(
-                    (m_playerCore->info().videoPositionSec - 5.0)
-                        / m_playerCore->info().videoDurationSec,
-                    0.0, 1.0)
-                : -1.0);
-        m_playerCore->seekRelative(-5.0, true);
-        event->accept();
-        return;
-    case Qt::Key_Right:
-        showPlaybackOsd(
-            tr("Seek Forward 5 Seconds"),
-            QString(),
-            m_playerCore->info().videoDurationSec > 0.0
-                ? std::clamp(
-                    (m_playerCore->info().videoPositionSec + 5.0)
-                        / m_playerCore->info().videoDurationSec,
-                    0.0, 1.0)
-                : -1.0);
-        m_playerCore->seekRelative(5.0, true);
-        event->accept();
-        return;
-    default:
-        QMainWindow::keyPressEvent(event);
-        return;
-    }
 }
 
 void MainWindow::setupWindowChrome()
@@ -510,6 +620,20 @@ void MainWindow::setupWindowChrome()
                     revealPlayerChrome();
                 }
             });
+    m_singleClickTimer = new QTimer(this);
+    m_singleClickTimer->setSingleShot(true);
+    connect(m_singleClickTimer, &QTimer::timeout, this, [this] {
+        if (m_progressMode) {
+            return;
+        }
+        if (m_playerChrome->isConcealed()) {
+            revealPlayerChrome();
+        } else {
+            m_chromeAutoHideTimer->stop();
+            m_playerChrome->conceal();
+            m_videoSurface->setCursor(Qt::BlankCursor);
+        }
+    });
 
     m_progressBar = new ProgressOnlyBar(contentRoot);
     m_progressBar->installEventFilter(this);
@@ -528,51 +652,185 @@ void MainWindow::setupWindowChrome()
 
 void MainWindow::setupMenus()
 {
-    QMenu *fileMenu = menuBar()->addMenu(tr("&File"));
+    QHash<PlayerMenu, QMenu *> menus;
+    menus.insert(PlayerMenu::File, menuBar()->addMenu(tr("&File")));
+    menus.insert(
+        PlayerMenu::Playback, menuBar()->addMenu(tr("&Playback")));
+    menus.insert(PlayerMenu::Video, menuBar()->addMenu(tr("&Video")));
+    menus.insert(PlayerMenu::Audio, menuBar()->addMenu(tr("&Audio")));
+    menus.insert(PlayerMenu::Window, menuBar()->addMenu(tr("&Window")));
 
-    QAction *openFilesAction =
-        fileMenu->addAction(tr("&Open File…"));
-    openFilesAction->setShortcuts(QKeySequence::Open);
-    openFilesAction->setStatusTip(
-        tr("Open one or more media files"));
-    connect(openFilesAction, &QAction::triggered,
-            this, &MainWindow::openFiles);
+    for (const auto &definition : playerCommandDefinitions()) {
+        auto *action = new QAction(definition.title, this);
+        action->setObjectName(
+            QStringLiteral("playerCommand_%1")
+                .arg(static_cast<int>(definition.command)));
+        action->setShortcuts(definition.shortcuts);
+        action->setShortcutContext(Qt::WindowShortcut);
+        action->setShortcutVisibleInContextMenu(true);
+        action->setCheckable(definition.checkable);
+        connect(action, &QAction::triggered, this,
+                [this, command = definition.command] {
+                    executeCommand(command);
+                });
+        m_commandActions.insert(definition.command, action);
+        menus.value(definition.menu)->addAction(action);
+    }
 
-    QAction *openFolderAction =
-        fileMenu->addAction(tr("Open &Folder…"));
-    openFolderAction->setShortcut(
-        QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
-    openFolderAction->setStatusTip(
-        tr("Open all supported media in a folder"));
-    connect(openFolderAction, &QAction::triggered,
-            this, &MainWindow::openFolder);
+    menus.value(PlayerMenu::File)->insertSeparator(
+        m_commandActions.value(PlayerCommand::CloseWindow));
+    menus.value(PlayerMenu::Playback)->insertSeparator(
+        m_commandActions.value(PlayerCommand::PreviousMedia));
+    menus.value(PlayerMenu::Playback)->insertSeparator(
+        m_commandActions.value(PlayerCommand::SeekBackward));
+    menus.value(PlayerMenu::Playback)->insertSeparator(
+        m_commandActions.value(PlayerCommand::SpeedDown));
+    menus.value(PlayerMenu::Window)->insertSeparator(
+        m_commandActions.value(PlayerCommand::PauseAndMinimize));
 
-    QMenu *viewMenu = menuBar()->addMenu(tr("&View"));
     m_fullScreenAction =
-        new QAction(tr("Enter Full Screen"), this);
-    m_fullScreenAction->setCheckable(true);
-    m_fullScreenAction->setShortcuts(
-        {QKeySequence(Qt::Key_F),
-         QKeySequence(Qt::Key_F11),
-         QKeySequence(Qt::ALT | Qt::Key_Return)});
-    m_fullScreenAction->setShortcutContext(Qt::WindowShortcut);
-    connect(m_fullScreenAction, &QAction::triggered,
-            this, &MainWindow::toggleFullScreen);
-    addAction(m_fullScreenAction);
-    viewMenu->addAction(m_fullScreenAction);
+        m_commandActions.value(PlayerCommand::ToggleFullScreen);
 
-    QAction *pauseAndMinimizeAction =
-        new QAction(tr("Pause and Minimize"), this);
-    pauseAndMinimizeAction->setShortcut(QKeySequence(Qt::Key_Escape));
-    pauseAndMinimizeAction->setShortcutContext(Qt::WindowShortcut);
-    connect(pauseAndMinimizeAction, &QAction::triggered,
-            this, &MainWindow::pauseAndMinimize);
-    addAction(pauseAndMinimizeAction);
+    m_playbackContextMenu = new QMenu(m_videoSurface);
+    m_playbackContextMenu->addAction(
+        m_commandActions.value(PlayerCommand::TogglePause));
+    m_playbackContextMenu->addSeparator();
+    m_playbackContextMenu->addAction(
+        m_commandActions.value(PlayerCommand::PreviousMedia));
+    m_playbackContextMenu->addAction(
+        m_commandActions.value(PlayerCommand::NextMedia));
+    m_playbackContextMenu->addSeparator();
+    m_playbackContextMenu->addAction(
+        m_commandActions.value(PlayerCommand::ToggleMute));
+    m_playbackContextMenu->addAction(m_fullScreenAction);
 
-    fileMenu->addSeparator();
-    QAction *exitAction = fileMenu->addAction(tr("E&xit"));
-    exitAction->setShortcut(QKeySequence::Quit);
-    connect(exitAction, &QAction::triggered, this, &QWidget::close);
+    updateCommandStates();
+}
+
+void MainWindow::executeCommand(PlayerCommand command)
+{
+    switch (command) {
+    case PlayerCommand::OpenFile:
+        openFiles();
+        break;
+    case PlayerCommand::OpenFolder:
+        openFolder();
+        break;
+    case PlayerCommand::CloseWindow:
+        close();
+        break;
+    case PlayerCommand::QuitApplication:
+        qApp->closeAllWindows();
+        break;
+    case PlayerCommand::TogglePause:
+        m_playerCore->togglePause();
+        break;
+    case PlayerCommand::Stop:
+        m_playerCore->stop();
+        break;
+    case PlayerCommand::PreviousMedia:
+        m_playerCore->navigateInPlaylist(false);
+        break;
+    case PlayerCommand::NextMedia:
+        m_playerCore->navigateInPlaylist(true);
+        break;
+    case PlayerCommand::SeekBackward:
+        m_playerCore->seekRelative(-5.0, true);
+        break;
+    case PlayerCommand::SeekForward:
+        m_playerCore->seekRelative(5.0, true);
+        break;
+    case PlayerCommand::JumpToBeginning:
+        m_playerCore->seekAbsolute(0.0);
+        break;
+    case PlayerCommand::FrameBackward:
+        m_playerCore->stepFrame(true);
+        break;
+    case PlayerCommand::FrameForward:
+        m_playerCore->stepFrame(false);
+        break;
+    case PlayerCommand::VolumeDown:
+        m_playerCore->setVolume(m_playerCore->info().volume - 3.0);
+        break;
+    case PlayerCommand::VolumeUp:
+        m_playerCore->setVolume(m_playerCore->info().volume + 3.0);
+        break;
+    case PlayerCommand::ToggleMute:
+        m_playerCore->toggleMute();
+        break;
+    case PlayerCommand::SpeedDown:
+        m_playerCore->setSpeed(
+            std::max(0.05, m_playerCore->info().playSpeed / 1.1));
+        break;
+    case PlayerCommand::SpeedUp:
+        m_playerCore->setSpeed(
+            std::min(4.0, m_playerCore->info().playSpeed * 1.1));
+        break;
+    case PlayerCommand::ResetSpeed:
+        m_playerCore->setSpeed(1.0);
+        break;
+    case PlayerCommand::TakeScreenshot:
+        m_playerCore->takeScreenshot();
+        break;
+    case PlayerCommand::ToggleFullScreen:
+        toggleFullScreen();
+        break;
+    case PlayerCommand::ToggleAlwaysOnTop: {
+        QAction *action = m_commandActions.value(command);
+        setWindowFlag(
+            Qt::WindowStaysOnTopHint, action && action->isChecked());
+        show();
+        break;
+    }
+    case PlayerCommand::ToggleProgressMode:
+        toggleProgressMode();
+        break;
+    case PlayerCommand::PauseAndMinimize:
+        pauseAndMinimize();
+        break;
+    }
+    updateCommandStates();
+}
+
+void MainWindow::updateCommandStates()
+{
+    const bool loaded = isLoaded(m_playerCore->info().state);
+    for (const auto &definition : playerCommandDefinitions()) {
+        if (QAction *action = m_commandActions.value(definition.command)) {
+            action->setEnabled(
+                !definition.requiresMedia || loaded);
+        }
+    }
+
+    if (QAction *pause =
+            m_commandActions.value(PlayerCommand::TogglePause)) {
+        pause->setText(
+            m_playerCore->info().state == PlayerState::Playing
+                ? tr("Pause") : tr("Play"));
+    }
+    if (QAction *mute =
+            m_commandActions.value(PlayerCommand::ToggleMute)) {
+        mute->setChecked(m_playerCore->info().isMuted);
+        mute->setText(
+            m_playerCore->info().isMuted ? tr("Unmute") : tr("Mute"));
+    }
+    if (QAction *fullScreen =
+            m_commandActions.value(PlayerCommand::ToggleFullScreen)) {
+        fullScreen->setChecked(isFullScreenMode());
+        fullScreen->setText(
+            isFullScreenMode()
+                ? tr("Exit Full Screen") : tr("Enter Full Screen"));
+    }
+    if (QAction *progress =
+            m_commandActions.value(PlayerCommand::ToggleProgressMode)) {
+        progress->setChecked(m_progressMode);
+    }
+    if (QAction *onTop =
+            m_commandActions.value(PlayerCommand::ToggleAlwaysOnTop)) {
+        onTop->setChecked(windowFlags().testFlag(
+            Qt::WindowStaysOnTopHint));
+        onTop->setEnabled(!isFullScreenMode() && !m_progressMode);
+    }
 }
 
 void MainWindow::openFiles()
@@ -665,6 +923,7 @@ void MainWindow::enterProgressMode()
     }
 
     m_progressMode = true;
+    updateCommandStates();
     if (m_playbackOsd) {
         m_playbackOsd->hideNow();
     }
@@ -754,6 +1013,7 @@ void MainWindow::exitProgressMode()
     const bool restoreFullScreen = m_progressRestoreFullScreen;
     const bool restoreMaximized = m_progressRestoreMaximized;
     m_progressMode = false;
+    updateCommandStates();
     m_progressRestoreFullScreen = false;
     m_progressRestoreMaximized = false;
 
@@ -878,6 +1138,7 @@ void MainWindow::syncFullScreenUi()
         positionPlayerChrome();
         revealPlayerChrome(false);
     }
+    updateCommandStates();
 }
 
 void MainWindow::applyDarkWindowFrame()

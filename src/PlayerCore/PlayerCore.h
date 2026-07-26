@@ -38,6 +38,8 @@ public:
     void seekPercent(double percent, bool forceExact = false);
     void seekRelative(double seconds, bool exact = false);
     void seekAbsolute(double seconds);
+    void stepFrame(bool backward);
+    void takeScreenshot();
 
     void setVolume(double volume);
     void toggleMute();

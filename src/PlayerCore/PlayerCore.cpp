@@ -316,6 +316,25 @@ void PlayerCore::seekAbsolute(double seconds)
          QStringLiteral("absolute+exact")});
 }
 
+void PlayerCore::stepFrame(bool backward)
+{
+    if (!isLoaded(m_info.state)) {
+        return;
+    }
+    m_mpv->command(
+        {backward ? QStringLiteral("frame-back-step")
+                  : QStringLiteral("frame-step")});
+}
+
+void PlayerCore::takeScreenshot()
+{
+    if (!isLoaded(m_info.state)) {
+        return;
+    }
+    m_mpv->command(
+        {QStringLiteral("screenshot"), QStringLiteral("subtitles")});
+}
+
 void PlayerCore::setVolume(double volume)
 {
     if (!isActive(m_info.state)) {

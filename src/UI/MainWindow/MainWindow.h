@@ -2,6 +2,7 @@
 
 #include <QMainWindow>
 #include <QByteArray>
+#include <QHash>
 #include <QList>
 #include <QRect>
 #include <QUrl>
@@ -22,6 +23,8 @@ class BufferingIndicator;
 class MpvVideoSurface;
 class PlayerCore;
 class ProgressOnlyBar;
+class QMenu;
+enum class PlayerCommand;
 
 class MainWindow final : public QMainWindow {
     Q_OBJECT
@@ -70,7 +73,8 @@ private:
     void exitFullScreen();
     void exitProgressMode();
     void finishEnteringProgressMode();
-    void handleKeyPress(QKeyEvent *event);
+    void executeCommand(PlayerCommand command);
+    [[nodiscard]] QMenu *menuForCommand(PlayerCommand command) const;
     void openFiles();
     void openFolder();
     void requestOpen(const QList<QUrl> &urls);
@@ -84,6 +88,7 @@ private:
     void syncFullScreenUi();
     void setupMenus();
     void setupWindowChrome();
+    void updateCommandStates();
 
     PlayerCore *m_playerCore = nullptr;
     MpvVideoSurface *m_videoSurface = nullptr;
@@ -95,7 +100,10 @@ private:
     ProgressOnlyBar *m_progressBar = nullptr;
     QStackedLayout *m_contentLayout = nullptr;
     QTimer *m_chromeAutoHideTimer = nullptr;
+    QTimer *m_singleClickTimer = nullptr;
     QAction *m_fullScreenAction = nullptr;
+    QHash<PlayerCommand, QAction *> m_commandActions;
+    QMenu *m_playbackContextMenu = nullptr;
     QString m_lastOpenDirectory;
     QByteArray m_windowedGeometry;
     QRect m_progressRestoreGeometry;
@@ -108,4 +116,6 @@ private:
     bool m_restoreFullScreenAfterMinimize = false;
     bool m_restoreMaximizedAfterMinimize = false;
     bool m_closePending = false;
+    bool m_resumeAfterWheelSeek = false;
+    bool m_ignoreNextLeftRelease = false;
 };

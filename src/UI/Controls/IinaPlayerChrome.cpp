@@ -516,12 +516,7 @@ IinaPlayerChrome::IinaPlayerChrome(
             });
     connect(m_timeline, &IinaTimeline::seekFinished,
             this, [this](double percent) {
-                const double target =
-                    m_duration * std::clamp(percent / 100.0, 0.0, 1.0);
-                emit osdRequested(
-                    tr("Seek to %1").arg(formatTime(target)),
-                    formatTime(m_duration),
-                    std::clamp(percent / 100.0, 0.0, 1.0));
+                Q_UNUSED(percent)
                 if (!m_wasPausedBeforeTimelineDrag) {
                     m_playerCore->resume();
                 }
