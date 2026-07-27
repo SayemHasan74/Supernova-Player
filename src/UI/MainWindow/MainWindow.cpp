@@ -109,6 +109,53 @@ private:
     double m_duration = 0.0;
 };
 
+namespace {
+bool shouldIgnorePlaybackShortcutTarget(const QWidget *widget)
+{
+    return qobject_cast<const QLineEdit *>(widget) != nullptr;
+}
+
+bool handlePlaybackKeyPress(
+    MainWindow *window, PlayerCore *playerCore, const QHash<PlayerCommand, QAction *> &actions,
+    QKeyEvent *event)
+{
+    Q_UNUSED(playerCore)
+    if (!window || !event || event->isAutoRepeat()) {
+        return false;
+    }
+
+    const PlayerCommand command = [&]() {
+        switch (event->key()) {
+        case Qt::Key_Space:
+            return PlayerCommand::TogglePause;
+        case Qt::Key_Left:
+            return PlayerCommand::SeekBackward;
+        case Qt::Key_Right:
+            return PlayerCommand::SeekForward;
+        case Qt::Key_Up:
+            return PlayerCommand::VolumeUp;
+        case Qt::Key_Down:
+            return PlayerCommand::VolumeDown;
+        default:
+            return static_cast<PlayerCommand>(-1);
+        }
+    }();
+
+    if (command == static_cast<PlayerCommand>(-1)) {
+        return false;
+    }
+
+    QAction *action = actions.value(command);
+    if (!action || !action->isEnabled()) {
+        return true;
+    }
+
+    action->trigger();
+    event->accept();
+    return true;
+}
+} // namespace
+
 MainWindow::MainWindow(PlayerCore *playerCore, QWidget *parent)
     : QMainWindow(parent),
       m_playerCore(playerCore)
@@ -521,6 +568,14 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
             || event->type() == QEvent::Enter)) {
         revealPlayerChrome();
     }
+    if (isPlaybackUi && event->type() == QEvent::KeyPress) {
+        auto *keyEvent = static_cast<QKeyEvent *>(event);
+        if (!shouldIgnorePlaybackShortcutTarget(watchedWidget)
+            && handlePlaybackKeyPress(
+                this, m_playerCore, m_commandActions, keyEvent)) {
+            return true;
+        }
+    }
     return QMainWindow::eventFilter(watched, event);
 }
 
@@ -548,6 +603,11 @@ bool MainWindow::nativeEvent(
 
 void MainWindow::keyPressEvent(QKeyEvent *event)
 {
+    if (!shouldIgnorePlaybackShortcutTarget(focusWidget())
+        && handlePlaybackKeyPress(
+            this, m_playerCore, m_commandActions, event)) {
+        return;
+    }
     QMainWindow::keyPressEvent(event);
 }
 
