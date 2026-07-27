@@ -772,6 +772,7 @@ void MainWindow::setupMenus()
                     executeCommand(command);
                 });
         m_commandActions.insert(definition.command, action);
+        addAction(action);
         menus.value(definition.menu)->addAction(action);
     }
 
@@ -870,10 +871,10 @@ void MainWindow::executeCommand(PlayerCommand command)
         m_playerCore->stepFrame(false);
         break;
     case PlayerCommand::VolumeDown:
-        m_playerCore->setVolume(m_playerCore->info().volume - 3.0);
+        m_playerCore->setVolume(m_playerCore->info().volume - 5.0);
         break;
     case PlayerCommand::VolumeUp:
-        m_playerCore->setVolume(m_playerCore->info().volume + 3.0);
+        m_playerCore->setVolume(m_playerCore->info().volume + 5.0);
         break;
     case PlayerCommand::ToggleMute:
         m_playerCore->toggleMute();
