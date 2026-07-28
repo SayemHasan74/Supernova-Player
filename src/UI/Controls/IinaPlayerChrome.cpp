@@ -730,16 +730,31 @@ void IinaPlayerChrome::setFullScreen(bool fullScreen)
 
 void IinaPlayerChrome::reveal(bool animated)
 {
+    auto *effect =
+        qobject_cast<QGraphicsOpacityEffect *>(graphicsEffect());
+    const bool wasConcealed = m_concealed;
     m_concealed = false;
     show();
     raise();
-    m_opacityAnimation->stop();
-    auto *effect =
-        qobject_cast<QGraphicsOpacityEffect *>(graphicsEffect());
     if (!animated) {
+        m_opacityAnimation->stop();
         effect->setOpacity(1.0);
         return;
     }
+
+    // Mouse tracking can deliver many move events during a single fade.
+    // Restarting the animation for every event makes the OSC approach full
+    // opacity in tiny increments and appear to respond late. Once a reveal is
+    // already running, only the outer auto-hide timer needs to be refreshed.
+    const bool revealAlreadyRunning =
+        !wasConcealed
+        && m_opacityAnimation->state() == QAbstractAnimation::Running
+        && m_opacityAnimation->endValue().toDouble() >= 1.0;
+    if (revealAlreadyRunning || effect->opacity() >= 0.999) {
+        return;
+    }
+
+    m_opacityAnimation->stop();
     m_opacityAnimation->setStartValue(effect->opacity());
     m_opacityAnimation->setEndValue(1.0);
     m_opacityAnimation->start();

@@ -3,6 +3,8 @@
 #include "UI/Design/DesignTokens.h"
 
 #include <QSignalSpy>
+#include <QGraphicsOpacityEffect>
+#include <QPropertyAnimation>
 #include <QSlider>
 #include <QTest>
 
@@ -15,6 +17,7 @@ private slots:
     void usesIinaFloatingGeometry();
     void exposesStableControlTopology();
     void timelineMapsPointerToMediaPercent();
+    void repeatedActivityDoesNotRestartRevealAnimation();
     void middleClickPassesThroughChromeControls();
     void openFileButtonRequestsFileDialog();
     void playlistButtonRequestsSidebar();
@@ -72,6 +75,27 @@ void IinaPlayerChromeTests::timelineMapsPointerToMediaPercent()
     QVERIFY(!spy.isEmpty());
     const double percent = spy.constLast().constFirst().toDouble();
     QVERIFY(std::abs(percent - 50.0) < 0.5);
+}
+
+void IinaPlayerChromeTests::repeatedActivityDoesNotRestartRevealAnimation()
+{
+    PlayerCore playerCore;
+    IinaPlayerChrome chrome(&playerCore);
+    chrome.conceal(false);
+    chrome.reveal();
+
+    auto *animation = chrome.findChild<QPropertyAnimation *>();
+    auto *effect = qobject_cast<QGraphicsOpacityEffect *>(
+        chrome.graphicsEffect());
+    QVERIFY(animation);
+    QVERIFY(effect);
+    QTRY_VERIFY_WITH_TIMEOUT(effect->opacity() > 0.0, 100);
+
+    const int elapsed = animation->currentTime();
+    chrome.reveal();
+
+    QVERIFY(animation->currentTime() >= elapsed);
+    QCOMPARE(animation->state(), QAbstractAnimation::Running);
 }
 
 void IinaPlayerChromeTests::middleClickPassesThroughChromeControls()
