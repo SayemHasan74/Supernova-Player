@@ -8,6 +8,8 @@
 #include <QThreadPool>
 #include <QUrl>
 
+#include <optional>
+
 struct PlaybackHistoryEntry {
     QString key;
     QUrl url;
@@ -43,6 +45,12 @@ public:
     [[nodiscard]] static QString keyForUrl(const QUrl &url);
     [[nodiscard]] static QString defaultHistoryFilePath();
     [[nodiscard]] static QString defaultWatchLaterDirectory();
+    [[nodiscard]] static QString watchLaterFilePath(
+        const QUrl &url, const QString &directory = {},
+        bool ignorePath = false);
+    [[nodiscard]] static std::optional<double> watchLaterPosition(
+        const QUrl &url, const QString &directory = {},
+        bool ignorePath = false);
 
     [[nodiscard]] const QList<PlaybackHistoryEntry> &entries() const noexcept
     {
@@ -68,6 +76,8 @@ public:
         bool reachedEnd = false);
     void remove(const QStringList &keys);
     void clear();
+    void refreshWatchLaterPositions(
+        const QString &directory = {}, bool ignorePath = false);
     bool save();
     void saveAsync();
 

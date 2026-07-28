@@ -912,6 +912,7 @@ void MainWindow::setupWindowChrome()
     m_progressBar = new ProgressOnlyBar(contentRoot);
     m_welcomeView = new WelcomeView(contentRoot);
     m_welcomeView->setHistory(m_playerCore->history());
+    m_welcomeView->setRecentMedia(m_playerCore->recentMedia());
     connect(m_welcomeView, &WelcomeView::openFileRequested,
             this, &MainWindow::openFiles);
     connect(m_welcomeView, &WelcomeView::openUrlRequested,
@@ -924,6 +925,8 @@ void MainWindow::setupWindowChrome()
             });
     connect(m_playerCore, &PlayerCore::historyChanged,
             m_welcomeView, &WelcomeView::setHistory);
+    connect(m_playerCore, &PlayerCore::recentMediaChanged,
+            m_welcomeView, &WelcomeView::setRecentMedia);
     m_contentLayout->addWidget(m_playbackPage);
     m_contentLayout->addWidget(m_progressBar);
     m_contentLayout->addWidget(m_welcomeView);
@@ -1489,6 +1492,7 @@ void MainWindow::showWelcomeView()
         m_mediaSettingsPanel->hide();
     }
     m_welcomeView->setHistory(m_playerCore->history());
+    m_welcomeView->setRecentMedia(m_playerCore->recentMedia());
     m_contentLayout->setCurrentWidget(m_welcomeView);
     if (!isMaximized()) {
         resize(640, 400);

@@ -14,6 +14,8 @@
 #include <QSettings>
 #include <QRegularExpression>
 #include <QProcess>
+#include <QPointer>
+#include <QRunnable>
 #include <utility>
 
 namespace {
@@ -47,8 +49,17 @@ PlayerCore::PlayerCore(QObject *parent)
     : QObject(parent),
       m_mpv(std::make_unique<MpvCore>())
 {
-    m_history.setRecordingEnabled(QSettings().value(
+    const QSettings settings;
+    m_history.setRecordingEnabled(settings.value(
         QStringLiteral("history/recordPlaybackHistory"), true).toBool());
+    m_recentMedia.setRecordingEnabled(settings.value(
+        QStringLiteral("history/recordRecentMedia"), true).toBool());
+    m_history.refreshWatchLaterPositions(
+        PlaybackHistoryStore::defaultWatchLaterDirectory(),
+        m_mpv->getFlag(
+            QStringLiteral("ignore-path-in-watch-later-config")));
+    m_matchingPool.setMaxThreadCount(1);
+    m_matchingPool.setExpiryTimeout(-1);
     connect(m_mpv.get(), &MpvCore::propertyChanged,
             this, &PlayerCore::onMpvPropertyChanged);
     connect(m_mpv.get(), &MpvCore::fileStarted,
@@ -95,7 +106,11 @@ PlayerCore::PlayerCore(QObject *parent)
             });
 }
 
-PlayerCore::~PlayerCore() = default;
+PlayerCore::~PlayerCore()
+{
+    m_matchingGeneration.fetch_add(1, std::memory_order_relaxed);
+    m_matchingPool.waitForDone();
+}
 
 void PlayerCore::openUrls(const QList<QUrl> &urls)
 {
@@ -119,9 +134,13 @@ void PlayerCore::openUrls(const QList<QUrl> &urls)
     }
 
     const QUrl openedUrl = validUrls.constFirst();
+    m_shouldAutoMatchCurrentOpen = validUrls.size() == 1;
     QList<QUrl> queue = validUrls;
     int openedPosition = 0;
-    if (validUrls.size() == 1 && openedUrl.isLocalFile()
+    const bool autoAddSiblings = QSettings().value(
+        QStringLiteral("matching/playlistAutoAdd"), true).toBool();
+    if (autoAddSiblings
+        && validUrls.size() == 1 && openedUrl.isLocalFile()
         && !MediaSourceResolver::supportedPlaylistExtensions().contains(
             QFileInfo(openedUrl.toLocalFile()).suffix().toLower())) {
         queue = MediaSourceResolver::siblingPlaylistFor(openedUrl);
@@ -139,6 +158,10 @@ void PlayerCore::openUrls(const QList<QUrl> &urls)
         }
     }
 
+    for (const QUrl &url : std::as_const(validUrls)) {
+        m_recentMedia.note(url);
+    }
+    emit recentMediaChanged(m_recentMedia.entries());
     openPrimaryUrl(openedUrl);
     for (const QUrl &url : std::as_const(queue)) {
         if (url == openedUrl
@@ -187,9 +210,6 @@ void PlayerCore::openUrl(const QUrl &url)
 void PlayerCore::openPrimaryUrl(const QUrl &url)
 {
     savePlaybackPosition();
-    m_pendingResumePosition = QSettings().value(
-        QStringLiteral("history/resumePlayback"), true).toBool()
-        ? m_history.entryFor(url).resumePosition() : 0.0;
     m_info.currentUrl = url;
     emit currentUrlChanged(url);
     m_info.isNetworkResource = !url.isLocalFile();
@@ -207,6 +227,8 @@ void PlayerCore::openPrimaryUrl(const QUrl &url)
     }
     setBufferingInfo({});
     m_pendingPlaybackError.clear();
+    m_lastWatchLaterSavePosition = 0.0;
+    m_loadedAutomaticSubtitles.clear();
 
     // Pause before loadfile so audio cannot start before the first video frame
     // is ready, which is noticeable with expensive software decoding.
@@ -602,6 +624,12 @@ void PlayerCore::clearHistory()
     synchronizePlaylist();
 }
 
+void PlayerCore::clearRecentMedia()
+{
+    m_recentMedia.clear();
+    emit recentMediaChanged(m_recentMedia.entries());
+}
+
 void PlayerCore::setHistoryRecordingEnabled(bool enabled)
 {
     QSettings().setValue(
@@ -617,6 +645,19 @@ void PlayerCore::setResumePlaybackEnabled(bool enabled)
         m_mpv->setFlag(QStringLiteral("save-position-on-quit"), enabled);
         m_mpv->setFlag(QStringLiteral("resume-playback"), enabled);
     }
+}
+
+void PlayerCore::setRecentMediaRecordingEnabled(bool enabled)
+{
+    QSettings().setValue(
+        QStringLiteral("history/recordRecentMedia"), enabled);
+    m_recentMedia.setRecordingEnabled(enabled);
+}
+
+void PlayerCore::setTrackPlaylistFilesAsRecent(bool enabled)
+{
+    QSettings().setValue(
+        QStringLiteral("history/trackPlaylistFilesAsRecent"), enabled);
 }
 
 void PlayerCore::executeMpvCommand(const QString &command)
@@ -1377,6 +1418,11 @@ void PlayerCore::onMpvPropertyChanged(
             emit historyChanged(m_history.entries());
             synchronizePlaylist();
         }
+        if (std::abs(
+                m_info.videoPositionSec
+                - m_lastWatchLaterSavePosition) >= 30.0) {
+            cacheWatchLaterPosition();
+        }
     } else if (name == QStringLiteral("duration")) {
         const double duration = value.toDouble();
         m_info.videoDurationSec =
@@ -1538,22 +1584,24 @@ void PlayerCore::onMpvFileStarted(const QString &path)
     if (!isActive(m_info.state)) {
         return;
     }
+    QUrl startedUrl;
     if (!path.isEmpty()) {
         Logger::info(QStringLiteral("mpv started file: %1").arg(path));
-        const QUrl startedUrl =
+        startedUrl =
             QFileInfo(path).isAbsolute()
                 ? QUrl::fromLocalFile(path)
                 : QUrl::fromUserInput(path);
         if (startedUrl.isValid()
             && startedUrl != m_info.currentUrl) {
-            m_pendingResumePosition =
-                QSettings().value(
-                    QStringLiteral("history/resumePlayback"), true).toBool()
-                ? m_history.entryFor(startedUrl).resumePosition() : 0.0;
             m_info.currentUrl = startedUrl;
             m_info.isNetworkResource = !startedUrl.isLocalFile();
             emit currentUrlChanged(startedUrl);
         }
+    }
+    m_loadedAutomaticSubtitles.clear();
+    m_lastWatchLaterSavePosition = 0.0;
+    if (startedUrl.isValid() && m_shouldAutoMatchCurrentOpen) {
+        startAutomaticMatching(startedUrl);
     }
     setEofReached(false);
     setBufferingInfo({});
@@ -1592,15 +1640,15 @@ void PlayerCore::onMpvFileLoaded()
     synchronizeSubtitleSettings();
     synchronizeVideoQuickSettings();
     synchronizeAudioQuickSettings();
-    if (m_info.videoPositionSec < 1.0
-        && m_pendingResumePosition > 0.0
-        && m_pendingResumePosition
-               < m_info.videoDurationSec - 5.0) {
-        seekAbsolute(m_pendingResumePosition);
-        m_info.videoPositionSec = m_pendingResumePosition;
+    if (QSettings().value(
+            QStringLiteral("history/trackPlaylistFilesAsRecent"), true)
+            .toBool()) {
+        m_recentMedia.note(m_info.currentUrl);
+        emit recentMediaChanged(m_recentMedia.entries());
     }
-    m_pendingResumePosition = 0.0;
     m_lastHistorySavePosition = m_info.videoPositionSec;
+    m_lastWatchLaterSavePosition = m_info.videoPositionSec;
+    loadMatchedSubtitlesForCurrentFile();
     emit durationChanged(m_info.videoDurationSec);
     emit positionChanged(m_info.videoPositionSec);
     if (m_info.hasVideo) {
@@ -2118,12 +2166,167 @@ void PlayerCore::savePlaybackPosition(bool reachedEnd)
     m_history.save();
     emit historyChanged(m_history.entries());
     synchronizePlaylist();
-    if (!reachedEnd) {
-        // IINA explicitly writes mpv's watch-later configuration before
-        // stopping. This preserves mpv-managed per-file state as well as the
-        // durable history metadata above.
+    if (reachedEnd) {
+        if (QSettings().value(
+                QStringLiteral("history/resumePlayback"), true).toBool()) {
+            m_mpv->command(
+                {QStringLiteral("delete-watch-later-config")});
+        }
+    } else {
+        cacheWatchLaterPosition();
+    }
+}
+
+void PlayerCore::cacheWatchLaterPosition()
+{
+    if (!isLoaded(m_info.state)
+        || !QSettings().value(
+                QStringLiteral("history/resumePlayback"), true).toBool()
+        || m_info.videoPositionSec < 5.0
+        || (m_info.videoDurationSec > 0.0
+            && m_info.videoPositionSec
+                   >= m_info.videoDurationSec - 10.0)) {
+        return;
+    }
+    m_lastWatchLaterSavePosition = m_info.videoPositionSec;
+    m_mpv->command(
+        {QStringLiteral("write-watch-later-config")});
+}
+
+AutomaticMatchOptions PlayerCore::automaticMatchOptions() const
+{
+    const QSettings settings;
+    AutomaticMatchOptions options;
+    options.addSiblingsToPlaylist = settings.value(
+        QStringLiteral("matching/playlistAutoAdd"), true).toBool();
+    options.subtitleMode = static_cast<SubtitleAutoLoadMode>(
+        std::clamp(
+            settings.value(
+                QStringLiteral("matching/subtitleMode"),
+                static_cast<int>(SubtitleAutoLoadMode::Smart))
+                .toInt(),
+            static_cast<int>(SubtitleAutoLoadMode::Disabled),
+            static_cast<int>(SubtitleAutoLoadMode::Smart)));
+    options.subtitleSearchPaths = settings.value(
+        QStringLiteral("matching/subtitleSearchPaths"),
+        QStringLiteral("./*")).toString();
+    options.subtitlePriorityStrings = settings.value(
+        QStringLiteral("matching/subtitlePriorityStrings")).toString();
+    return options;
+}
+
+void PlayerCore::startAutomaticMatching(const QUrl &url)
+{
+    if (!url.isLocalFile()) {
+        return;
+    }
+    const QFileInfo file(url.toLocalFile());
+    if (!MediaSourceResolver::supportedMediaExtensions().contains(
+            file.suffix().toLower())) {
+        return;
+    }
+    QString folder = file.absoluteDir().canonicalPath();
+    if (folder.isEmpty()) {
+        folder = file.absolutePath();
+    }
+    folder = QDir::cleanPath(folder);
+    if (folder.compare(m_matchingFolder, Qt::CaseInsensitive) == 0) {
+        if (m_matchingReady) {
+            loadMatchedSubtitlesForCurrentFile();
+        }
+        return;
+    }
+
+    const quint64 generation =
+        m_matchingGeneration.fetch_add(
+            1, std::memory_order_relaxed) + 1;
+    m_matchingFolder = folder;
+    m_matchingInProgress = true;
+    m_matchingReady = false;
+    m_matchedSubtitles.clear();
+    const AutomaticMatchOptions options = automaticMatchOptions();
+    QPointer<PlayerCore> guarded(this);
+    m_matchingPool.start(QRunnable::create(
+        [this, guarded, generation, folder, url, options] {
+            const AutomaticMatchResult result =
+                AutomaticFileMatcher::match(
+                    url, options, [this, generation] {
+                        return m_matchingGeneration.load(
+                                   std::memory_order_relaxed)
+                               != generation;
+                    });
+            if (result.cancelled || !guarded) {
+                return;
+            }
+            QMetaObject::invokeMethod(
+                guarded,
+                [guarded, generation, folder,
+                 matches = result.subtitlesByMedia] {
+                    if (guarded) {
+                        guarded->applyAutomaticMatches(
+                            generation, folder, matches);
+                    }
+                },
+                Qt::QueuedConnection);
+        }));
+}
+
+void PlayerCore::applyAutomaticMatches(
+    quint64 generation, const QString &folder,
+    const QHash<QString, QList<QUrl>> &matches)
+{
+    if (generation
+            != m_matchingGeneration.load(std::memory_order_relaxed)
+        || folder.compare(m_matchingFolder, Qt::CaseInsensitive) != 0) {
+        return;
+    }
+    m_matchingInProgress = false;
+    m_matchingReady = true;
+    m_matchedSubtitles = matches;
+    loadMatchedSubtitlesForCurrentFile();
+}
+
+void PlayerCore::loadMatchedSubtitlesForCurrentFile()
+{
+    if (!isLoaded(m_info.state) || !m_info.currentUrl.isLocalFile()) {
+        return;
+    }
+    const QList<QUrl> matches = m_matchedSubtitles.value(
+        AutomaticFileMatcher::mediaKey(m_info.currentUrl));
+    bool selectFirst = m_loadedAutomaticSubtitles.isEmpty();
+    for (const QUrl &subtitle : matches) {
+        const QString key = AutomaticFileMatcher::mediaKey(subtitle);
+        if (m_loadedAutomaticSubtitles.contains(key)) {
+            continue;
+        }
+        const bool alreadyLoaded = std::any_of(
+            m_info.tracks.subtitleTracks.cbegin(),
+            m_info.tracks.subtitleTracks.cend(),
+            [&key](const MediaTrack &track) {
+                return track.isExternal
+                    && AutomaticFileMatcher::mediaKey(
+                           QUrl::fromLocalFile(track.externalFilename))
+                           == key;
+            });
+        m_loadedAutomaticSubtitles.insert(key);
+        if (alreadyLoaded) {
+            continue;
+        }
+        const QString path =
+            QDir::toNativeSeparators(subtitle.toLocalFile());
         m_mpv->command(
-            {QStringLiteral("write-watch-later-config")});
+            {QStringLiteral("sub-add"), path,
+             selectFirst ? QStringLiteral("select")
+                         : QStringLiteral("auto")},
+            [path](const MpvCommandResult &result) {
+                if (!result.succeeded()) {
+                    Logger::warn(
+                        QStringLiteral(
+                            "Could not auto-load subtitle '%1': %2")
+                            .arg(path, result.errorMessage));
+                }
+            });
+        selectFirst = false;
     }
 }
 

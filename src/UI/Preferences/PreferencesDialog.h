@@ -25,6 +25,7 @@ signals:
 
 private:
     QWidget *createGeneralPage();
+    QWidget *createMatchingPage();
     QWidget *createProfilesPage();
     QWidget *createKeyBindingsPage();
     QWidget *createAdvancedPage();
@@ -47,7 +48,13 @@ private:
     PlayerCore *m_playerCore = nullptr;
     QCheckBox *m_recordHistory = nullptr;
     QCheckBox *m_resumePlayback = nullptr;
+    QCheckBox *m_recordRecentMedia = nullptr;
+    QCheckBox *m_trackPlaylistFilesAsRecent = nullptr;
     QLabel *m_historyPath = nullptr;
+    QCheckBox *m_playlistAutoAdd = nullptr;
+    QComboBox *m_subtitleMode = nullptr;
+    QLineEdit *m_subtitleSearchPaths = nullptr;
+    QLineEdit *m_subtitlePriorityStrings = nullptr;
 
     QComboBox *m_profile = nullptr;
     QTextEdit *m_mpvConfig = nullptr;

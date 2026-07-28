@@ -1,4 +1,5 @@
 #include "App/MediaSourceResolver.h"
+#include "App/AutomaticFileMatcher.h"
 #include "PlayerCore/PlaylistIO.h"
 
 #include <QCoreApplication>
@@ -107,6 +108,44 @@ int main(int argc, char *argv[])
         remote.size() == 1
             && remote.constFirst().scheme() == QStringLiteral("https"),
         "network URLs must be accepted");
+
+    std::cerr << "Checking automatic series and subtitle matching\n";
+    root.mkpath(QStringLiteral("Subs"));
+    const QString episode1 =
+        root.filePath(QStringLiteral("Series.S01E01.mkv"));
+    const QString episode2 =
+        root.filePath(QStringLiteral("Series.S01E02.mkv"));
+    const QString episode3 =
+        root.filePath(QStringLiteral("Series.S01E03.mkv"));
+    const QString subtitle1 = root.filePath(
+        QStringLiteral("Subs/Series.S01E01.en.srt"));
+    const QString subtitle2 = root.filePath(
+        QStringLiteral("Subs/Series.S01E02.en.srt"));
+    const QString subtitle3 = root.filePath(
+        QStringLiteral("Subs/Series.S01E03.en.srt"));
+    passed &= expect(
+        createFile(episode1) && createFile(episode2)
+            && createFile(episode3) && createFile(subtitle1)
+            && createFile(subtitle2) && createFile(subtitle3),
+        "series matching fixtures must be created");
+    AutomaticMatchOptions matchOptions;
+    matchOptions.subtitleSearchPaths = QStringLiteral("./*");
+    const AutomaticMatchResult matched =
+        AutomaticFileMatcher::match(
+            QUrl::fromLocalFile(episode1), matchOptions);
+    passed &= expect(
+        matched.subtitlesByMedia.value(
+            AutomaticFileMatcher::mediaKey(
+                QUrl::fromLocalFile(episode2))).contains(
+                    QUrl::fromLocalFile(subtitle2)),
+        "smart matching must associate each episode with its subtitle");
+    const AutomaticMatchResult cancelled =
+        AutomaticFileMatcher::match(
+            QUrl::fromLocalFile(episode1), matchOptions,
+            [] { return true; });
+    passed &= expect(
+        cancelled.cancelled,
+        "background matching must honor cancellation");
 
     std::cerr << "Checking playlist import and export\n";
     const QString importedPath =

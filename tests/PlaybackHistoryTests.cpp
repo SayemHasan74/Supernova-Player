@@ -1,4 +1,5 @@
 #include "PlayerCore/PlaybackHistory.h"
+#include "PlayerCore/RecentMedia.h"
 
 #include <QFile>
 #include <QFileInfo>
@@ -14,6 +15,8 @@ private slots:
     void removesAndClearsEntries();
     void storesLocalFileMetadataAndStablePlayTime();
     void respectsHistoryRecordingPreference();
+    void readsAndReconcilesWatchLaterPosition();
+    void recentMediaPersistsAndMovesReopenedItemToFront();
 };
 
 void PlaybackHistoryTests::persistsResumePositionByStableFileIdentity()
@@ -119,6 +122,60 @@ void PlaybackHistoryTests::respectsHistoryRecordingPreference()
     history.updateProgress(url, 20.0, 100.0);
 
     QVERIFY(history.entries().isEmpty());
+}
+
+void PlaybackHistoryTests::readsAndReconcilesWatchLaterPosition()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QUrl media = QUrl::fromLocalFile(
+        temporary.filePath(QStringLiteral("episode.mkv")));
+    PlaybackHistoryStore history(
+        temporary.filePath(QStringLiteral("history.json")));
+    history.recordLoaded(media, 1200.0);
+    const QString watchLater =
+        PlaybackHistoryStore::watchLaterFilePath(
+            media, temporary.path(), false);
+    QFile file(watchLater);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+    QCOMPARE(file.write("pause=yes\nstart=321.25\n"), 23);
+    file.close();
+
+    const std::optional<double> position =
+        PlaybackHistoryStore::watchLaterPosition(
+            media, temporary.path(), false);
+    QVERIFY(position.has_value());
+    QCOMPARE(*position, 321.25);
+    history.refreshWatchLaterPositions(temporary.path(), false);
+    QCOMPARE(history.entryFor(media).positionSec, 321.25);
+}
+
+void PlaybackHistoryTests::
+    recentMediaPersistsAndMovesReopenedItemToFront()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString path =
+        temporary.filePath(QStringLiteral("recent.json"));
+    const QUrl first = QUrl::fromLocalFile(
+        temporary.filePath(QStringLiteral("one.mkv")));
+    const QUrl second = QUrl::fromLocalFile(
+        temporary.filePath(QStringLiteral("two.mkv")));
+    {
+        RecentMediaStore recent(path);
+        recent.note(first);
+        recent.note(second);
+        recent.note(first);
+        QCOMPARE(recent.entries().size(), 2);
+        QCOMPARE(recent.entries().constFirst().url, first);
+    }
+    RecentMediaStore restored(path);
+    QCOMPARE(restored.entries().size(), 2);
+    QCOMPARE(restored.entries().constFirst().url, first);
+    restored.setRecordingEnabled(false);
+    restored.note(QUrl::fromLocalFile(
+        temporary.filePath(QStringLiteral("private.mkv"))));
+    QCOMPARE(restored.entries().size(), 2);
 }
 
 QTEST_APPLESS_MAIN(PlaybackHistoryTests)

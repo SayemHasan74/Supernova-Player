@@ -3,6 +3,7 @@
 #include "Core/Logger.h"
 
 #include <QDir>
+#include <QCryptographicHash>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -96,6 +97,55 @@ QString PlaybackHistoryStore::keyForUrl(const QUrl &url)
     QUrl normalized = url.adjusted(
         QUrl::NormalizePathSegments | QUrl::RemoveFragment);
     return normalized.toString(QUrl::FullyEncoded);
+}
+
+QString PlaybackHistoryStore::watchLaterFilePath(
+    const QUrl &url, const QString &directory, bool ignorePath)
+{
+    QString identity;
+    if (ignorePath && (url.isLocalFile() || url.scheme().isEmpty())) {
+        identity = QFileInfo(url.toLocalFile()).fileName();
+    } else if (url.isLocalFile()) {
+        const QFileInfo info(url.toLocalFile());
+        QString path = info.canonicalFilePath();
+        if (path.isEmpty()) {
+            path = info.absoluteFilePath();
+        }
+        identity = QDir::toNativeSeparators(QDir::cleanPath(path));
+    } else {
+        identity = url.toString(QUrl::FullyEncoded);
+    }
+    const QString hash = QString::fromLatin1(
+        QCryptographicHash::hash(
+            identity.toUtf8(), QCryptographicHash::Md5)
+            .toHex()
+            .toUpper());
+    return QDir(directory.isEmpty()
+                    ? defaultWatchLaterDirectory() : directory)
+        .filePath(hash);
+}
+
+std::optional<double> PlaybackHistoryStore::watchLaterPosition(
+    const QUrl &url, const QString &directory, bool ignorePath)
+{
+    QFile file(watchLaterFilePath(url, directory, ignorePath));
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return std::nullopt;
+    }
+    while (!file.atEnd()) {
+        const QByteArray line = file.readLine().trimmed();
+        if (!line.startsWith("start=")) {
+            continue;
+        }
+        bool valid = false;
+        const double position = QString::fromUtf8(line.mid(6))
+                                    .toDouble(&valid);
+        if (valid && std::isfinite(position) && position >= 0.0) {
+            return position;
+        }
+        break;
+    }
+    return std::nullopt;
 }
 
 PlaybackHistoryEntry PlaybackHistoryStore::entryFor(
@@ -211,6 +261,29 @@ void PlaybackHistoryStore::clear()
     m_entries.clear();
     m_dirty = true;
     save();
+}
+
+void PlaybackHistoryStore::refreshWatchLaterPositions(
+    const QString &directory, bool ignorePath)
+{
+    bool changed = false;
+    for (PlaybackHistoryEntry &entry : m_entries) {
+        const std::optional<double> position =
+            watchLaterPosition(entry.url, directory, ignorePath);
+        if (!position.has_value() || entry.completed
+            || qFuzzyCompare(entry.positionSec + 1.0, *position + 1.0)) {
+            continue;
+        }
+        entry.positionSec =
+            entry.durationSec > 0.0
+                ? std::clamp(*position, 0.0, entry.durationSec)
+                : std::max(0.0, *position);
+        changed = true;
+    }
+    if (changed) {
+        m_dirty = true;
+        save();
+    }
 }
 
 bool PlaybackHistoryStore::save()

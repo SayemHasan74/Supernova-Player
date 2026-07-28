@@ -59,6 +59,7 @@ PreferencesDialog::PreferencesDialog(
     auto *root = new QVBoxLayout(this);
     auto *tabs = new QTabWidget(this);
     tabs->addTab(createGeneralPage(), tr("General"));
+    tabs->addTab(createMatchingPage(), tr("Matching"));
     tabs->addTab(createProfilesPage(), tr("Profiles"));
     tabs->addTab(createKeyBindingsPage(), tr("Key Bindings"));
     tabs->addTab(createAdvancedPage(), tr("Advanced"));
@@ -106,8 +107,20 @@ QWidget *PreferencesDialog::createGeneralPage()
         tr("Resume media from the last playback position"), page);
     m_resumePlayback->setChecked(settings.value(
         QStringLiteral("history/resumePlayback"), true).toBool());
+    m_recordRecentMedia = new QCheckBox(
+        tr("Remember recently opened media"), page);
+    m_recordRecentMedia->setChecked(settings.value(
+        QStringLiteral("history/recordRecentMedia"), true).toBool());
+    m_trackPlaylistFilesAsRecent = new QCheckBox(
+        tr("Include files reached through the playlist in Recent Media"),
+        page);
+    m_trackPlaylistFilesAsRecent->setChecked(settings.value(
+        QStringLiteral("history/trackPlaylistFilesAsRecent"), true)
+        .toBool());
     layout->addWidget(m_recordHistory);
     layout->addWidget(m_resumePlayback);
+    layout->addWidget(m_recordRecentMedia);
+    layout->addWidget(m_trackPlaylistFilesAsRecent);
 
     auto *explanation = new QLabel(
         tr("History metadata and mpv watch-later state are stored separately. "
@@ -134,7 +147,12 @@ QWidget *PreferencesDialog::createGeneralPage()
     layout->addWidget(m_historyPath);
 
     auto *clear = smallButton(tr("Clear Playback History…"), page);
-    layout->addWidget(clear, 0, Qt::AlignLeft);
+    auto *clearRecent = smallButton(tr("Clear Recent Media…"), page);
+    auto *clearLine = new QHBoxLayout;
+    clearLine->addWidget(clear);
+    clearLine->addWidget(clearRecent);
+    clearLine->addStretch();
+    layout->addLayout(clearLine);
     connect(clear, &QPushButton::clicked, this, [this] {
         if (m_playerCore
             && QMessageBox::question(
@@ -144,6 +162,69 @@ QWidget *PreferencesDialog::createGeneralPage()
             m_playerCore->clearHistory();
         }
     });
+    connect(clearRecent, &QPushButton::clicked, this, [this] {
+        if (m_playerCore
+            && QMessageBox::question(
+                   this, tr("Clear Recent Media"),
+                   tr("Remove every item from Recent Media?"))
+                == QMessageBox::Yes) {
+            m_playerCore->clearRecentMedia();
+        }
+    });
+    layout->addStretch();
+    return page;
+}
+
+QWidget *PreferencesDialog::createMatchingPage()
+{
+    auto *page = new QWidget(this);
+    auto *layout = new QVBoxLayout(page);
+    layout->setContentsMargins(18, 18, 18, 18);
+    layout->setSpacing(10);
+    const QSettings settings;
+
+    m_playlistAutoAdd = new QCheckBox(
+        tr("Automatically add playable files in the same folder"),
+        page);
+    m_playlistAutoAdd->setChecked(settings.value(
+        QStringLiteral("matching/playlistAutoAdd"), true).toBool());
+    layout->addWidget(m_playlistAutoAdd);
+
+    auto *form = new QFormLayout;
+    m_subtitleMode = new QComboBox(page);
+    m_subtitleMode->addItem(
+        tr("Disabled"), static_cast<int>(SubtitleAutoLoadMode::Disabled));
+    m_subtitleMode->addItem(
+        tr("Filename containment"),
+        static_cast<int>(SubtitleAutoLoadMode::Filename));
+    m_subtitleMode->addItem(
+        tr("Smart series matching"),
+        static_cast<int>(SubtitleAutoLoadMode::Smart));
+    const int mode = settings.value(
+        QStringLiteral("matching/subtitleMode"),
+        static_cast<int>(SubtitleAutoLoadMode::Smart)).toInt();
+    m_subtitleMode->setCurrentIndex(
+        std::max(0, m_subtitleMode->findData(mode)));
+    m_subtitleSearchPaths = new QLineEdit(settings.value(
+        QStringLiteral("matching/subtitleSearchPaths"),
+        QStringLiteral("./*")).toString(), page);
+    m_subtitlePriorityStrings = new QLineEdit(settings.value(
+        QStringLiteral("matching/subtitlePriorityStrings")).toString(),
+        page);
+    form->addRow(tr("Subtitle matching"), m_subtitleMode);
+    form->addRow(tr("Subtitle search paths"), m_subtitleSearchPaths);
+    form->addRow(tr("Priority strings"), m_subtitlePriorityStrings);
+    layout->addLayout(form);
+
+    auto *hint = new QLabel(
+        tr("Separate subtitle paths with semicolons. Relative paths are "
+           "resolved beside the media; “./*” searches each immediate "
+           "subfolder. Separate priority strings with commas."),
+        page);
+    hint->setWordWrap(true);
+    hint->setStyleSheet(
+        QStringLiteral("color: rgba(235,235,245,160);"));
+    layout->addWidget(hint);
     layout->addStretch();
     return page;
 }
@@ -476,6 +557,24 @@ void PreferencesDialog::applyPreferences()
         QStringLiteral("history/resumePlayback"),
         m_resumePlayback->isChecked());
     settings.setValue(
+        QStringLiteral("history/recordRecentMedia"),
+        m_recordRecentMedia->isChecked());
+    settings.setValue(
+        QStringLiteral("history/trackPlaylistFilesAsRecent"),
+        m_trackPlaylistFilesAsRecent->isChecked());
+    settings.setValue(
+        QStringLiteral("matching/playlistAutoAdd"),
+        m_playlistAutoAdd->isChecked());
+    settings.setValue(
+        QStringLiteral("matching/subtitleMode"),
+        m_subtitleMode->currentData().toInt());
+    settings.setValue(
+        QStringLiteral("matching/subtitleSearchPaths"),
+        m_subtitleSearchPaths->text().trimmed());
+    settings.setValue(
+        QStringLiteral("matching/subtitlePriorityStrings"),
+        m_subtitlePriorityStrings->text().trimmed());
+    settings.setValue(
         QStringLiteral("advanced/enabled"),
         m_enableAdvanced->isChecked());
     settings.setValue(
@@ -492,6 +591,10 @@ void PreferencesDialog::applyPreferences()
             m_recordHistory->isChecked());
         m_playerCore->setResumePlaybackEnabled(
             m_resumePlayback->isChecked());
+        m_playerCore->setRecentMediaRecordingEnabled(
+            m_recordRecentMedia->isChecked());
+        m_playerCore->setTrackPlaylistFilesAsRecent(
+            m_trackPlaylistFilesAsRecent->isChecked());
     }
     refreshProfiles();
 }

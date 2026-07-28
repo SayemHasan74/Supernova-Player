@@ -27,6 +27,8 @@ qt_add_executable(Supernova WIN32
     src/App/CommandLineArgs.cpp
     src/App/MediaSourceResolver.h
     src/App/MediaSourceResolver.cpp
+    src/App/AutomaticFileMatcher.h
+    src/App/AutomaticFileMatcher.cpp
     src/Core/Logger.h
     src/Core/Logger.cpp
     src/Preferences/PlayerConfiguration.h
@@ -46,6 +48,8 @@ qt_add_executable(Supernova WIN32
     src/PlayerCore/NavigationState.h
     src/PlayerCore/PlaybackHistory.h
     src/PlayerCore/PlaybackHistory.cpp
+    src/PlayerCore/RecentMedia.h
+    src/PlayerCore/RecentMedia.cpp
     src/PlayerCore/PlaylistState.h
     src/PlayerCore/PlaylistIO.h
     src/PlayerCore/PlaylistIO.cpp
@@ -143,6 +147,8 @@ if(BUILD_TESTING)
         tests/MediaSourceResolverTests.cpp
         src/App/MediaSourceResolver.h
         src/App/MediaSourceResolver.cpp
+        src/App/AutomaticFileMatcher.h
+        src/App/AutomaticFileMatcher.cpp
         src/PlayerCore/PlaylistIO.h
         src/PlayerCore/PlaylistIO.cpp
         src/PlayerCore/PlaylistState.h
@@ -185,6 +191,8 @@ if(BUILD_TESTING)
         tests/PlayerCoreLifecycleTests.cpp
         src/App/MediaSourceResolver.h
         src/App/MediaSourceResolver.cpp
+        src/App/AutomaticFileMatcher.h
+        src/App/AutomaticFileMatcher.cpp
         src/Core/Logger.h
         src/Core/Logger.cpp
         src/Mpv/MpvCore.h
@@ -201,6 +209,8 @@ if(BUILD_TESTING)
         src/PlayerCore/NavigationState.h
         src/PlayerCore/PlaybackHistory.h
         src/PlayerCore/PlaybackHistory.cpp
+        src/PlayerCore/RecentMedia.h
+        src/PlayerCore/RecentMedia.cpp
         src/PlayerCore/PlaylistState.h
         src/PlayerCore/PlayerCore.h
         src/PlayerCore/PlayerCore.cpp
@@ -245,6 +255,8 @@ if(BUILD_TESTING)
         tests/IinaPlayerChromeTests.cpp
         src/App/MediaSourceResolver.h
         src/App/MediaSourceResolver.cpp
+        src/App/AutomaticFileMatcher.h
+        src/App/AutomaticFileMatcher.cpp
         src/Core/Logger.h
         src/Core/Logger.cpp
         src/Mpv/MpvCore.h
@@ -261,6 +273,8 @@ if(BUILD_TESTING)
         src/PlayerCore/NavigationState.h
         src/PlayerCore/PlaybackHistory.h
         src/PlayerCore/PlaybackHistory.cpp
+        src/PlayerCore/RecentMedia.h
+        src/PlayerCore/RecentMedia.cpp
         src/PlayerCore/PlaylistState.h
         src/PlayerCore/PlayerCore.h
         src/PlayerCore/PlayerCore.cpp
@@ -316,6 +330,8 @@ if(BUILD_TESTING)
         src/Core/Logger.cpp
         src/PlayerCore/PlaybackHistory.h
         src/PlayerCore/PlaybackHistory.cpp
+        src/PlayerCore/RecentMedia.h
+        src/PlayerCore/RecentMedia.cpp
     )
     target_include_directories(
         SupernovaPlaybackHistoryTests PRIVATE src)
@@ -352,7 +368,10 @@ if(BUILD_TESTING)
 
     qt_add_executable(SupernovaWelcomeViewTests
         tests/WelcomeViewTests.cpp
+        src/Core/Logger.h
+        src/Core/Logger.cpp
         src/PlayerCore/PlaybackHistory.h
+        src/PlayerCore/PlaybackHistory.cpp
         src/UI/Welcome/WelcomeView.h
         src/UI/Welcome/WelcomeView.cpp
     )

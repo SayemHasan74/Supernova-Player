@@ -1,15 +1,21 @@
 #pragma once
 
+#include "App/AutomaticFileMatcher.h"
 #include "Mpv/MpvEvent.h"
 #include "PlayerCore/PlaybackInfo.h"
 #include "PlayerCore/PlaybackHistory.h"
+#include "PlayerCore/RecentMedia.h"
 
 #include <QList>
 #include <QObject>
+#include <QHash>
+#include <QSet>
+#include <QThreadPool>
 #include <QUrl>
 #include <QVariant>
 
 #include <memory>
+#include <atomic>
 #include <optional>
 
 class MpvCore;
@@ -50,8 +56,11 @@ public:
     void toggleAbLoop();
     void removeHistoryEntries(const QStringList &keys);
     void clearHistory();
+    void clearRecentMedia();
     void setHistoryRecordingEnabled(bool enabled);
     void setResumePlaybackEnabled(bool enabled);
+    void setRecentMediaRecordingEnabled(bool enabled);
+    void setTrackPlaylistFilesAsRecent(bool enabled);
     void executeMpvCommand(const QString &command);
     void applyMpvProfile(const QString &profile);
     void reloadMpvConfiguration();
@@ -63,6 +72,10 @@ public:
     [[nodiscard]] QString historyFilePath() const
     {
         return m_history.filePath();
+    }
+    [[nodiscard]] const QList<RecentMediaEntry> &recentMedia() const noexcept
+    {
+        return m_recentMedia.entries();
     }
 
     void seekPercent(double percent, bool forceExact = false);
@@ -127,6 +140,7 @@ signals:
     void playlistChanged(const PlaylistState &playlist);
     void historyChanged(
         const QList<PlaybackHistoryEntry> &history);
+    void recentMediaChanged(const QList<RecentMediaEntry> &recent);
     void chaptersChanged(
         const QList<PlaybackChapter> &chapters);
     void chapterChanged(int index);
@@ -179,6 +193,13 @@ private:
         const QString &command, const QUrl &url,
         const QString &failureDescription);
     void savePlaybackPosition(bool reachedEnd = false);
+    void cacheWatchLaterPosition();
+    void startAutomaticMatching(const QUrl &url);
+    void applyAutomaticMatches(
+        quint64 generation, const QString &folder,
+        const QHash<QString, QList<QUrl>> &matches);
+    void loadMatchedSubtitlesForCurrentFile();
+    [[nodiscard]] AutomaticMatchOptions automaticMatchOptions() const;
     void setEofReached(bool reached);
     void resetTransientPlaybackInfo();
     void resynchronizeFromMpv();
@@ -187,12 +208,21 @@ private:
 
     std::unique_ptr<MpvCore> m_mpv;
     PlaybackHistoryStore m_history;
+    RecentMediaStore m_recentMedia;
     PlaybackInfo m_info;
     QList<QUrl> m_pendingUrls;
     QString m_pendingPlaybackError;
     bool m_isSeeking = false;
-    double m_pendingResumePosition = 0.0;
     double m_lastHistorySavePosition = 0.0;
+    double m_lastWatchLaterSavePosition = 0.0;
+    QThreadPool m_matchingPool;
+    std::atomic<quint64> m_matchingGeneration{0};
+    QString m_matchingFolder;
+    bool m_matchingInProgress = false;
+    bool m_matchingReady = false;
+    QHash<QString, QList<QUrl>> m_matchedSubtitles;
+    QSet<QString> m_loadedAutomaticSubtitles;
+    bool m_shouldAutoMatchCurrentOpen = true;
     quint64 m_nextUserFilterId = 1;
 
     friend class PlayerCoreLifecycleTests;

@@ -12,6 +12,7 @@ class WelcomeViewTests final : public QObject {
 
 private slots:
     void showsResumeAndNineMoreOfTenRecentVideos();
+    void recentMediaRemainsIndependentFromPlaybackHistory();
 };
 
 void WelcomeViewTests::showsResumeAndNineMoreOfTenRecentVideos()
@@ -78,6 +79,38 @@ void WelcomeViewTests::showsResumeAndNineMoreOfTenRecentVideos()
         recents->visualItemRect(firstRecent).center());
     QCOMPARE(opened.count(), 1);
     QCOMPARE(opened.takeFirst().constFirst().toUrl(), history[1].url);
+}
+
+void WelcomeViewTests::recentMediaRemainsIndependentFromPlaybackHistory()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    QList<RecentMediaEntry> recent;
+    for (int index = 0; index < 3; ++index) {
+        const QString path = temporary.filePath(
+            QStringLiteral("recent-%1.mp4").arg(index));
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.close();
+        recent.append(
+            {QUrl::fromLocalFile(path),
+             QDateTime::currentDateTime().addSecs(-index)});
+    }
+
+    WelcomeView view;
+    view.setHistory({});
+    view.setRecentMedia(recent);
+    auto *resume = view.findChild<QPushButton *>(
+        QStringLiteral("welcomeResumeButton"));
+    auto *recents = view.findChild<QListWidget *>(
+        QStringLiteral("welcomeRecentList"));
+    QVERIFY(resume);
+    QVERIFY(recents);
+    QVERIFY(!resume->isVisible());
+    QCOMPARE(recents->count(), 3);
+    QCOMPARE(
+        recents->item(0)->data(Qt::UserRole).toUrl(),
+        recent.constFirst().url);
 }
 
 QTEST_MAIN(WelcomeViewTests)

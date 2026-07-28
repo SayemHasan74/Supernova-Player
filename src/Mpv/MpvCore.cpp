@@ -563,6 +563,46 @@ MpvCore::MpvCore(QObject *parent)
 
         requireInitializationStep(
             mpv_initialize(m_mpv), "mpv_initialize failed");
+
+        // mpv 0.38 omits the secondary subtitle selection and delay from
+        // its default watch-later set. Keep both subtitle layers symmetrical
+        // unless the user explicitly supplied watch-later-options.
+        const QList<ConfiguredMpvOption> configuredAdvancedOptions =
+            PlayerConfiguration::advancedOptions();
+        const bool userConfiguredWatchLaterOptions =
+            PlayerConfiguration::advancedSettingsEnabled()
+            && std::any_of(
+                configuredAdvancedOptions.cbegin(),
+                configuredAdvancedOptions.cend(),
+                [](const ConfiguredMpvOption &option) {
+                    QString name = option.name.trimmed();
+                    while (name.startsWith(QLatin1Char('-'))) {
+                        name.remove(0, 1);
+                    }
+                    return name == QStringLiteral("watch-later-options");
+                });
+        if (!userConfiguredWatchLaterOptions) {
+            QStringList savedOptions =
+                getString(QStringLiteral("watch-later-options"))
+                    .split(QLatin1Char(','), Qt::SkipEmptyParts);
+            const auto addAlongside =
+                [&savedOptions](const QString &primary,
+                                const QString &secondary) {
+                    if (savedOptions.contains(primary)
+                        && !savedOptions.contains(secondary)) {
+                        savedOptions.append(secondary);
+                    }
+                };
+            addAlongside(
+                QStringLiteral("sid"),
+                QStringLiteral("secondary-sid"));
+            addAlongside(
+                QStringLiteral("sub-delay"),
+                QStringLiteral("secondary-sub-delay"));
+            setString(
+                QStringLiteral("watch-later-options"),
+                savedOptions.join(QLatin1Char(',')));
+        }
         m_eventThread =
             std::make_unique<MpvEventThread>(this, m_mpv);
         m_eventThread->start(QThread::HighPriority);

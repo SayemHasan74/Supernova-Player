@@ -244,8 +244,22 @@ WelcomeView::WelcomeView(QWidget *parent)
 void WelcomeView::setHistory(
     const QList<PlaybackHistoryEntry> &history)
 {
+    m_history = history;
+    rebuildMedia();
+}
+
+void WelcomeView::setRecentMedia(
+    const QList<RecentMediaEntry> &recent)
+{
+    m_recentMedia = recent;
+    m_hasRecentMedia = true;
+    rebuildMedia();
+}
+
+void WelcomeView::rebuildMedia()
+{
     m_visibleHistory.clear();
-    for (const PlaybackHistoryEntry &entry : history) {
+    for (const PlaybackHistoryEntry &entry : m_history) {
         if (entry.url.isLocalFile()
             && !QFileInfo::exists(entry.url.toLocalFile())) {
             continue;
@@ -256,23 +270,59 @@ void WelcomeView::setHistory(
         }
     }
     m_recentList->clear();
-    if (m_visibleHistory.isEmpty()) {
+    const bool hasResume = !m_visibleHistory.isEmpty();
+    if (!hasResume) {
         m_resumeButton->hide();
-        m_historyButton->hide();
-        return;
+    } else {
+        const PlaybackHistoryEntry &latest =
+            m_visibleHistory.constFirst();
+        static_cast<WelcomeActionButton *>(m_resumeButton)->setLabels(
+            tr("↶  Resume  %1").arg(displayName(latest)),
+            formatTime(latest.positionSec));
+        m_resumeButton->setToolTip(latest.url.toDisplayString());
+        m_resumeButton->show();
+    }
+    m_historyButton->setVisible(!m_history.isEmpty());
+
+    QList<PlaybackHistoryEntry> recentRows;
+    if (m_hasRecentMedia) {
+        const QString resumeKey = hasResume
+            ? PlaybackHistoryStore::keyForUrl(
+                  m_visibleHistory.constFirst().url)
+            : QString();
+        for (const RecentMediaEntry &recent : std::as_const(m_recentMedia)) {
+            if (PlaybackHistoryStore::keyForUrl(recent.url) == resumeKey
+                || (recent.url.isLocalFile()
+                    && !QFileInfo::exists(recent.url.toLocalFile()))) {
+                continue;
+            }
+            auto history = std::find_if(
+                m_history.cbegin(), m_history.cend(),
+                [&recent](const PlaybackHistoryEntry &entry) {
+                    return PlaybackHistoryStore::keyForUrl(entry.url)
+                        == PlaybackHistoryStore::keyForUrl(recent.url);
+                });
+            if (history != m_history.cend()) {
+                recentRows.append(*history);
+            } else {
+                PlaybackHistoryEntry entry;
+                entry.url = recent.url;
+                entry.displayName = recent.url.isLocalFile()
+                    ? QFileInfo(recent.url.toLocalFile()).fileName()
+                    : recent.url.fileName();
+                entry.lastPlayed = recent.openedAt;
+                recentRows.append(entry);
+            }
+            if (recentRows.size() == (hasResume ? 9 : 10)) {
+                break;
+            }
+        }
+    } else {
+        recentRows = m_visibleHistory.mid(1, 9);
     }
 
-    const PlaybackHistoryEntry &latest = m_visibleHistory.constFirst();
-    static_cast<WelcomeActionButton *>(m_resumeButton)->setLabels(
-        tr("↶  Resume  %1").arg(displayName(latest)),
-        formatTime(latest.positionSec));
-    m_resumeButton->setToolTip(latest.url.toDisplayString());
-    m_resumeButton->show();
-    m_historyButton->show();
-
     QFileIconProvider iconProvider;
-    for (int index = 1; index < m_visibleHistory.size(); ++index) {
-        const PlaybackHistoryEntry &entry = m_visibleHistory[index];
+    for (const PlaybackHistoryEntry &entry : std::as_const(recentRows)) {
         auto *item = new QListWidgetItem(m_recentList);
         item->setData(Qt::UserRole, entry.url);
         item->setToolTip(entry.url.toDisplayString());
