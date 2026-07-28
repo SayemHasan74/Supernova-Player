@@ -13,14 +13,17 @@
 #include "UI/Welcome/WelcomeView.h"
 #include "UI/History/HistoryWindow.h"
 #include "UI/Preferences/PreferencesDialog.h"
+#include "UI/Inspector/MediaInspector.h"
 #include "UI/Design/DesignTokens.h"
 
 #include <QAction>
 #include <QApplication>
 #include <QCloseEvent>
+#include <QClipboard>
 #include <QContextMenuEvent>
 #include <QCursor>
 #include <QDir>
+#include <QDesktopServices>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QEvent>
@@ -40,6 +43,8 @@
 #include <QPainter>
 #include <QPaintEvent>
 #include <QScreen>
+#include <QSettings>
+#include <QStandardPaths>
 #include <QStackedLayout>
 #include <QTimer>
 #include <QWheelEvent>
@@ -180,6 +185,7 @@ MainWindow::MainWindow(PlayerCore *playerCore, QWidget *parent)
             m_historyWindow, &HistoryWindow::setHistory);
     m_preferencesDialog =
         new PreferencesDialog(m_playerCore, this);
+    m_mediaInspector = new MediaInspector(m_playerCore, this);
     connect(m_preferencesDialog,
             &PreferencesDialog::keyBindingsChanged,
             this, &MainWindow::reloadKeyBindings);
@@ -793,6 +799,7 @@ void MainWindow::setupWindowChrome()
     connect(m_playerChrome, &IinaPlayerChrome::progressModeRequested,
             this, &MainWindow::toggleProgressMode);
     m_timelinePreview = new TimelinePreview(m_playbackPage);
+    m_screenshotPreview = new ScreenshotPreview(m_playbackPage);
     m_bufferingIndicator =
         new BufferingIndicator(m_playbackPage);
     m_playlistPanel = new PlaylistPanel(m_playbackPage);
@@ -803,11 +810,28 @@ void MainWindow::setupWindowChrome()
         this, [this](double seconds, const QPoint &globalAnchor) {
             const QPoint anchor =
                 m_playbackPage->mapFromGlobal(globalAnchor);
-            m_timelinePreview->showTime(
-                seconds, anchor, m_playerChrome->y());
+            m_timelinePreview->showPreview(
+                seconds, anchor, m_playerChrome->y(),
+                m_playerCore->thumbnailAt(seconds));
         });
     connect(m_playerChrome, &IinaPlayerChrome::previewDismissed,
             m_timelinePreview, &TimelinePreview::dismiss);
+    connect(
+        m_playerCore, &PlayerCore::screenshotCaptured,
+        this,
+        [this](const QImage &image, const QUrl &fileUrl, bool) {
+            const QSettings settings;
+            if (settings.value(
+                    QStringLiteral("screenshots/copyToClipboard"),
+                    false).toBool()) {
+                QApplication::clipboard()->setImage(image);
+            }
+            if (settings.value(
+                    QStringLiteral("screenshots/showPreview"),
+                    true).toBool()) {
+                m_screenshotPreview->showScreenshot(image, fileUrl);
+            }
+        });
     connect(
         m_playerCore, &PlayerCore::bufferingChanged,
         this, [this](const BufferingInfo &buffering) {
@@ -1105,6 +1129,9 @@ void MainWindow::executeCommand(PlayerCommand command)
     case PlayerCommand::TakeScreenshot:
         m_playerCore->takeScreenshot();
         break;
+    case PlayerCommand::OpenScreenshotFolder:
+        openScreenshotFolder();
+        break;
     case PlayerCommand::ToggleFullScreen:
         toggleFullScreen();
         break;
@@ -1126,6 +1153,9 @@ void MainWindow::executeCommand(PlayerCommand command)
         break;
     case PlayerCommand::ShowPlaybackHistory:
         showPlaybackHistory();
+        break;
+    case PlayerCommand::ShowMediaInspector:
+        showMediaInspector();
         break;
     case PlayerCommand::ShowPreferences:
         showPreferences();
@@ -1232,6 +1262,25 @@ void MainWindow::showPlaybackHistory()
     m_historyWindow->show();
     m_historyWindow->raise();
     m_historyWindow->activateWindow();
+}
+
+void MainWindow::showMediaInspector()
+{
+    if (m_mediaInspector) {
+        m_mediaInspector->showInspector();
+    }
+}
+
+void MainWindow::openScreenshotFolder()
+{
+    const QString fallback =
+        QDir(QStandardPaths::writableLocation(
+                 QStandardPaths::PicturesLocation))
+            .filePath(QStringLiteral("Screenshots"));
+    const QString folder = QSettings().value(
+        QStringLiteral("screenshots/folder"), fallback).toString();
+    QDir().mkpath(folder);
+    QDesktopServices::openUrl(QUrl::fromLocalFile(folder));
 }
 
 void MainWindow::showPreferences()
@@ -1905,6 +1954,7 @@ void MainWindow::beginShutdown()
     m_playbackPage = nullptr;
     m_playerChrome = nullptr;
     m_timelinePreview = nullptr;
+    m_screenshotPreview = nullptr;
     m_bufferingIndicator = nullptr;
     m_playlistPanel = nullptr;
     m_mediaSettingsPanel = nullptr;

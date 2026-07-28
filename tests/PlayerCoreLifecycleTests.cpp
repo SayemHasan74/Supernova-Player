@@ -3,6 +3,10 @@
 
 #include <QDataStream>
 #include <QFile>
+#include <QFileInfo>
+#include <QImage>
+#include <QSettings>
+#include <QScopeGuard>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
@@ -55,6 +59,7 @@ private slots:
     void nativePlaylistBuildsAuthoritativeQueueState();
     void realPlaylistSupportsPlayRemoveAndClear();
     void singleLocalFileAutoloadsSiblingsAndNextPlaysThem();
+    void screenshotUsesConfiguredDestinationWhenFixtureIsProvided();
 };
 
 void PlayerCoreLifecycleTests::initTestCase()
@@ -216,6 +221,74 @@ void PlayerCoreLifecycleTests::realMediaReachesEofAndRestarts()
     QTRY_COMPARE_WITH_TIMEOUT(
         core.info().state, PlayerState::Playing, 5000);
     QVERIFY(eofSpy.count() >= 2);
+}
+
+void PlayerCoreLifecycleTests::
+    screenshotUsesConfiguredDestinationWhenFixtureIsProvided()
+{
+    const QString path =
+        qEnvironmentVariable("SUPERNOVA_TEST_VIDEO");
+    if (path.isEmpty() || !QFileInfo::exists(path)) {
+        QSKIP("SUPERNOVA_TEST_VIDEO was not provided");
+    }
+    QTemporaryDir screenshots;
+    QVERIFY(screenshots.isValid());
+    QSettings settings;
+    const QVariant previousSave =
+        settings.value(QStringLiteral("screenshots/saveToFile"));
+    const QVariant previousClipboard =
+        settings.value(QStringLiteral("screenshots/copyToClipboard"));
+    const QVariant previousFolder =
+        settings.value(QStringLiteral("screenshots/folder"));
+    const QVariant previousSubtitles =
+        settings.value(QStringLiteral("screenshots/includeSubtitles"));
+    const QVariant previousFormat =
+        settings.value(QStringLiteral("screenshots/format"));
+    const auto restoreSettings = qScopeGuard([&settings,
+        previousSave, previousClipboard, previousFolder,
+        previousSubtitles, previousFormat] {
+        const auto restore = [&settings](const QString &key,
+                                         const QVariant &value) {
+            value.isValid() ? settings.setValue(key, value)
+                            : settings.remove(key);
+        };
+        restore(QStringLiteral("screenshots/saveToFile"), previousSave);
+        restore(QStringLiteral("screenshots/copyToClipboard"),
+                previousClipboard);
+        restore(QStringLiteral("screenshots/folder"), previousFolder);
+        restore(QStringLiteral("screenshots/includeSubtitles"),
+                previousSubtitles);
+        restore(QStringLiteral("screenshots/format"), previousFormat);
+        settings.sync();
+    });
+    settings.setValue(QStringLiteral("screenshots/saveToFile"), true);
+    settings.setValue(
+        QStringLiteral("screenshots/copyToClipboard"), false);
+    settings.setValue(
+        QStringLiteral("screenshots/folder"), screenshots.path());
+    settings.setValue(
+        QStringLiteral("screenshots/includeSubtitles"), true);
+    settings.setValue(QStringLiteral("screenshots/format"),
+                      QStringLiteral("png"));
+    settings.sync();
+
+    PlayerCore core;
+    core.m_mpv->setString(
+        QStringLiteral("vo"), QStringLiteral("null"));
+    core.m_mpv->setString(
+        QStringLiteral("audio"), QStringLiteral("no"));
+    core.m_mpv->setFlag(QStringLiteral("mute"), true);
+    QSignalSpy loaded(&core, &PlayerCore::mediaLoaded);
+    QSignalSpy captured(&core, &PlayerCore::screenshotCaptured);
+    core.openUrl(QUrl::fromLocalFile(path));
+    QTRY_COMPARE_WITH_TIMEOUT(loaded.count(), 1, 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(core.info().hasVideo, 10000);
+    core.takeScreenshot();
+    QTRY_COMPARE_WITH_TIMEOUT(captured.count(), 1, 10000);
+    const QList<QVariant> arguments = captured.takeFirst();
+    QVERIFY(!qvariant_cast<QImage>(arguments[0]).isNull());
+    QVERIFY(arguments[2].toBool());
+    QVERIFY(QFileInfo::exists(arguments[1].toUrl().toLocalFile()));
 }
 
 void PlayerCoreLifecycleTests::

@@ -55,6 +55,8 @@ const QList<PlayerCommandDefinition> &playerCommandDefinitions()
 
         {PlayerCommand::TakeScreenshot, PlayerMenu::Video,
          QStringLiteral("Take Screenshot"), {QStringLiteral("S")}, true},
+        {PlayerCommand::OpenScreenshotFolder, PlayerMenu::Video,
+         QStringLiteral("Open Screenshot Folder"), {}},
         {PlayerCommand::ToggleFullScreen, PlayerMenu::Video,
          QStringLiteral("Enter Full Screen"),
          {QStringLiteral("F"), QStringLiteral("F11"),
@@ -81,6 +83,9 @@ const QList<PlayerCommandDefinition> &playerCommandDefinitions()
         {PlayerCommand::ShowPlaybackHistory, PlayerMenu::Window,
          QStringLiteral("Playback History…"),
          {QStringLiteral("Ctrl+H")}},
+        {PlayerCommand::ShowMediaInspector, PlayerMenu::Window,
+         QStringLiteral("Media Inspector…"),
+         {QStringLiteral("Ctrl+I")}, true},
         {PlayerCommand::ShowPreferences, PlayerMenu::Window,
          QStringLiteral("Preferences…"),
          {QStringLiteral("Ctrl+,")}},
@@ -119,12 +124,16 @@ QString playerCommandIdentifier(PlayerCommand command)
     case PlayerCommand::SpeedUp: return QStringLiteral("SpeedUp");
     case PlayerCommand::ResetSpeed: return QStringLiteral("ResetSpeed");
     case PlayerCommand::TakeScreenshot: return QStringLiteral("TakeScreenshot");
+    case PlayerCommand::OpenScreenshotFolder:
+        return QStringLiteral("OpenScreenshotFolder");
     case PlayerCommand::ToggleFullScreen: return QStringLiteral("ToggleFullScreen");
     case PlayerCommand::ToggleAlwaysOnTop: return QStringLiteral("ToggleAlwaysOnTop");
     case PlayerCommand::ToggleProgressMode: return QStringLiteral("ToggleProgressMode");
     case PlayerCommand::TogglePlaylist: return QStringLiteral("TogglePlaylist");
     case PlayerCommand::ToggleMediaSettings: return QStringLiteral("ToggleMediaSettings");
     case PlayerCommand::ShowPlaybackHistory: return QStringLiteral("ShowPlaybackHistory");
+    case PlayerCommand::ShowMediaInspector:
+        return QStringLiteral("ShowMediaInspector");
     case PlayerCommand::ShowPreferences: return QStringLiteral("ShowPreferences");
     case PlayerCommand::PauseAndMinimize: return QStringLiteral("PauseAndMinimize");
     }

@@ -50,6 +50,8 @@ qt_add_executable(Supernova WIN32
     src/PlayerCore/PlaybackHistory.cpp
     src/PlayerCore/RecentMedia.h
     src/PlayerCore/RecentMedia.cpp
+    src/PlayerCore/ThumbnailProvider.h
+    src/PlayerCore/ThumbnailProvider.cpp
     src/PlayerCore/PlaylistState.h
     src/PlayerCore/PlaylistIO.h
     src/PlayerCore/PlaylistIO.cpp
@@ -70,6 +72,8 @@ qt_add_executable(Supernova WIN32
     src/UI/Welcome/WelcomeView.cpp
     src/UI/History/HistoryWindow.h
     src/UI/History/HistoryWindow.cpp
+    src/UI/Inspector/MediaInspector.h
+    src/UI/Inspector/MediaInspector.cpp
     src/UI/Preferences/PreferencesDialog.h
     src/UI/Preferences/PreferencesDialog.cpp
     src/UI/MainWindow/MainWindow.h
@@ -211,6 +215,8 @@ if(BUILD_TESTING)
         src/PlayerCore/PlaybackHistory.cpp
         src/PlayerCore/RecentMedia.h
         src/PlayerCore/RecentMedia.cpp
+        src/PlayerCore/ThumbnailProvider.h
+        src/PlayerCore/ThumbnailProvider.cpp
         src/PlayerCore/PlaylistState.h
         src/PlayerCore/PlayerCore.h
         src/PlayerCore/PlayerCore.cpp
@@ -221,6 +227,7 @@ if(BUILD_TESTING)
     target_link_libraries(
         SupernovaPlayerCoreLifecycleTests PRIVATE
         Qt6::Core
+        Qt6::Gui
         Qt6::Test
         Supernova::mpv)
     set_target_properties(
@@ -275,6 +282,8 @@ if(BUILD_TESTING)
         src/PlayerCore/PlaybackHistory.cpp
         src/PlayerCore/RecentMedia.h
         src/PlayerCore/RecentMedia.cpp
+        src/PlayerCore/ThumbnailProvider.h
+        src/PlayerCore/ThumbnailProvider.cpp
         src/PlayerCore/PlaylistState.h
         src/PlayerCore/PlayerCore.h
         src/PlayerCore/PlayerCore.cpp
@@ -390,11 +399,44 @@ if(BUILD_TESTING)
         NAME WelcomeView
         COMMAND SupernovaWelcomeViewTests)
 
+    qt_add_executable(SupernovaThumbnailProviderTests
+        tests/ThumbnailProviderTests.cpp
+        src/Core/Logger.h
+        src/Core/Logger.cpp
+        src/PlayerCore/ThumbnailProvider.h
+        src/PlayerCore/ThumbnailProvider.cpp
+    )
+    target_include_directories(
+        SupernovaThumbnailProviderTests PRIVATE src)
+    target_link_libraries(
+        SupernovaThumbnailProviderTests PRIVATE
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Test
+        Supernova::mpv)
+    set_target_properties(
+        SupernovaThumbnailProviderTests PROPERTIES
+        WIN32_EXECUTABLE FALSE)
+    add_custom_command(
+        TARGET SupernovaThumbnailProviderTests POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "${MPV_RUNTIME_DLL}"
+            "$<TARGET_FILE_DIR:SupernovaThumbnailProviderTests>"
+        VERBATIM
+    )
+    add_test(
+        NAME ThumbnailProvider
+        COMMAND SupernovaThumbnailProviderTests)
+
     if(WIN32)
         set_tests_properties(
             MediaSourceResolver MpvCore PlayerCoreLifecycle
             MediaTrack IinaPlayerChrome PlayerCommand PlaybackHistory
             PlayerConfiguration WelcomeView PROPERTIES
+            ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+        set_tests_properties(
+            ThumbnailProvider PROPERTIES
             ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
     endif()

@@ -77,6 +77,7 @@ void PlayerConfigurationTests::builtInBindingsCoverPlayerLevelCommands()
 
     QVERIFY(containsAction(QStringLiteral("PauseAndMinimize")));
     QVERIFY(containsAction(QStringLiteral("ShowPlaybackHistory")));
+    QVERIFY(containsAction(QStringLiteral("ShowMediaInspector")));
     QVERIFY(containsAction(QStringLiteral("ShowPreferences")));
 }
 

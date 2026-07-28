@@ -9,6 +9,7 @@
 #include <cmath>
 #include <QCoreApplication>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QStringList>
 #include <QSettings>
@@ -16,6 +17,7 @@
 #include <QProcess>
 #include <QPointer>
 #include <QRunnable>
+#include <QStandardPaths>
 #include <utility>
 
 namespace {
@@ -62,6 +64,10 @@ PlayerCore::PlayerCore(QObject *parent)
     m_matchingPool.setExpiryTimeout(-1);
     connect(m_mpv.get(), &MpvCore::propertyChanged,
             this, &PlayerCore::onMpvPropertyChanged);
+    connect(&m_thumbnails, &ThumbnailProvider::thumbnailsChanged,
+            this, &PlayerCore::thumbnailsChanged);
+    connect(&m_thumbnails, &ThumbnailProvider::thumbnailsReady,
+            this, &PlayerCore::thumbnailsReady);
     connect(m_mpv.get(), &MpvCore::fileStarted,
             this, &PlayerCore::onMpvFileStarted);
     connect(m_mpv.get(), &MpvCore::fileLoaded,
@@ -229,6 +235,7 @@ void PlayerCore::openPrimaryUrl(const QUrl &url)
     m_pendingPlaybackError.clear();
     m_lastWatchLaterSavePosition = 0.0;
     m_loadedAutomaticSubtitles.clear();
+    m_thumbnails.clear();
 
     // Pause before loadfile so audio cannot start before the first video frame
     // is ready, which is noticeable with expensive software decoding.
@@ -762,11 +769,92 @@ void PlayerCore::stepFrame(bool backward)
 
 void PlayerCore::takeScreenshot()
 {
-    if (!isLoaded(m_info.state)) {
+    if (!isLoaded(m_info.state) || !m_info.hasVideo) {
         return;
     }
+    const QSettings settings;
+    const bool saveToFile = settings.value(
+        QStringLiteral("screenshots/saveToFile"), true).toBool();
+    const bool copyToClipboard = settings.value(
+        QStringLiteral("screenshots/copyToClipboard"), false).toBool();
+    if (!saveToFile && !copyToClipboard) {
+        return;
+    }
+    QString format = settings.value(
+        QStringLiteral("screenshots/format"),
+        QStringLiteral("png")).toString().toLower();
+    if (!QStringList{
+            QStringLiteral("png"), QStringLiteral("jpg"),
+            QStringLiteral("webp")}.contains(format)) {
+        format = QStringLiteral("png");
+    }
+    QString directory;
+    if (saveToFile) {
+        directory = settings.value(
+            QStringLiteral("screenshots/folder"),
+            QDir(QStandardPaths::writableLocation(
+                     QStandardPaths::PicturesLocation))
+                .filePath(QStringLiteral("Screenshots")))
+                        .toString();
+    } else {
+        directory = QDir(QStandardPaths::writableLocation(
+                             QStandardPaths::TempLocation))
+                        .filePath(
+                            QStringLiteral("Supernova/screenshot_cache"));
+    }
+    directory = QDir::cleanPath(
+        QDir::fromNativeSeparators(directory));
+    if (!QDir().mkpath(directory)) {
+        return;
+    }
+    QString base = m_info.currentUrl.isLocalFile()
+        ? QFileInfo(m_info.currentUrl.toLocalFile()).completeBaseName()
+        : QStringLiteral("screenshot");
+    base.replace(
+        QRegularExpression(QStringLiteral(R"([<>:"/\\|?*])")),
+        QStringLiteral("_"));
+    QString path;
+    for (int sequence = 1; sequence < 100000; ++sequence) {
+        path = QDir(directory).filePath(
+            QStringLiteral("%1-%2.%3")
+                .arg(base)
+                .arg(sequence, 4, 10, QLatin1Char('0'))
+                .arg(format));
+        if (!QFileInfo::exists(path)) {
+            break;
+        }
+    }
+    const bool includeSubtitles = settings.value(
+        QStringLiteral("screenshots/includeSubtitles"), true).toBool();
     m_mpv->command(
-        {QStringLiteral("screenshot"), QStringLiteral("subtitles")});
+        {QStringLiteral("screenshot-to-file"),
+         QDir::toNativeSeparators(path),
+         includeSubtitles ? QStringLiteral("subtitles")
+                          : QStringLiteral("video")},
+        [this, path, saveToFile](const MpvCommandResult &result) {
+            if (!result.succeeded()) {
+                return;
+            }
+            QImage image(path);
+            if (image.isNull()) {
+                return;
+            }
+            emit screenshotCaptured(
+                image, QUrl::fromLocalFile(path), saveToFile);
+            if (!saveToFile) {
+                QFile::remove(path);
+            }
+        });
+}
+
+QVariant PlayerCore::mpvProperty(const QString &name) const
+{
+    return m_mpv ? m_mpv->getNode(name) : QVariant();
+}
+
+QString PlayerCore::mpvPropertyString(const QString &name) const
+{
+    return m_mpv ? m_mpv->getString(name) : QString();
 }
 
 void PlayerCore::setVolume(double volume)
@@ -1649,6 +1737,10 @@ void PlayerCore::onMpvFileLoaded()
     m_lastHistorySavePosition = m_info.videoPositionSec;
     m_lastWatchLaterSavePosition = m_info.videoPositionSec;
     loadMatchedSubtitlesForCurrentFile();
+    m_thumbnails.request(
+        m_info.currentUrl, m_info.videoDurationSec,
+        QSettings().value(
+            QStringLiteral("thumbnails/width"), 120).toInt());
     emit durationChanged(m_info.videoDurationSec);
     emit positionChanged(m_info.videoPositionSec);
     if (m_info.hasVideo) {

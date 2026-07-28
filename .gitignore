@@ -1,5 +1,6 @@
 /build/
 /deps/mpv/
+/vcpkg_installed/
 *.user
 *.user.*
 CMakeUserPresets.json

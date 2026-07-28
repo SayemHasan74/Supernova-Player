@@ -6,6 +6,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
+#include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
@@ -20,6 +21,8 @@
 #include <QRegularExpression>
 #include <QSettings>
 #include <QSignalBlocker>
+#include <QSpinBox>
+#include <QStandardPaths>
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QTextEdit>
@@ -60,6 +63,7 @@ PreferencesDialog::PreferencesDialog(
     auto *tabs = new QTabWidget(this);
     tabs->addTab(createGeneralPage(), tr("General"));
     tabs->addTab(createMatchingPage(), tr("Matching"));
+    tabs->addTab(createMediaToolsPage(), tr("Media Tools"));
     tabs->addTab(createProfilesPage(), tr("Profiles"));
     tabs->addTab(createKeyBindingsPage(), tr("Key Bindings"));
     tabs->addTab(createAdvancedPage(), tr("Advanced"));
@@ -225,6 +229,108 @@ QWidget *PreferencesDialog::createMatchingPage()
     hint->setStyleSheet(
         QStringLiteral("color: rgba(235,235,245,160);"));
     layout->addWidget(hint);
+    layout->addStretch();
+    return page;
+}
+
+QWidget *PreferencesDialog::createMediaToolsPage()
+{
+    auto *page = new QWidget(this);
+    auto *layout = new QVBoxLayout(page);
+    layout->setContentsMargins(18, 18, 18, 18);
+    layout->setSpacing(10);
+    const QSettings settings;
+
+    auto *thumbnailTitle = new QLabel(tr("Timeline Thumbnails"), page);
+    QFont titleFont = thumbnailTitle->font();
+    titleFont.setBold(true);
+    thumbnailTitle->setFont(titleFont);
+    layout->addWidget(thumbnailTitle);
+    m_thumbnailEnabled = new QCheckBox(
+        tr("Enable timeline thumbnail previews"), page);
+    m_thumbnailEnabled->setChecked(settings.value(
+        QStringLiteral("thumbnails/enabled"), true).toBool());
+    layout->addWidget(m_thumbnailEnabled);
+    auto *thumbnailForm = new QFormLayout;
+    m_thumbnailWidth = new QSpinBox(page);
+    m_thumbnailWidth->setRange(80, 300);
+    m_thumbnailWidth->setSuffix(tr(" px"));
+    m_thumbnailWidth->setValue(settings.value(
+        QStringLiteral("thumbnails/width"), 120).toInt());
+    m_thumbnailCacheSize = new QSpinBox(page);
+    m_thumbnailCacheSize->setRange(0, 4096);
+    m_thumbnailCacheSize->setSuffix(tr(" MiB"));
+    m_thumbnailCacheSize->setSpecialValueText(tr("Disabled"));
+    m_thumbnailCacheSize->setValue(settings.value(
+        QStringLiteral("thumbnails/maxCacheMiB"), 500).toInt());
+    thumbnailForm->addRow(tr("Preview width"), m_thumbnailWidth);
+    thumbnailForm->addRow(tr("Maximum cache"), m_thumbnailCacheSize);
+    layout->addLayout(thumbnailForm);
+    auto *clearCache = smallButton(tr("Clear Thumbnail Cache…"), page);
+    layout->addWidget(clearCache, 0, Qt::AlignLeft);
+    connect(clearCache, &QPushButton::clicked, this, [this] {
+        if (QMessageBox::question(
+                this, tr("Clear Thumbnail Cache"),
+                tr("Delete every cached timeline thumbnail?"))
+            == QMessageBox::Yes) {
+            ThumbnailProvider::clearCache();
+        }
+    });
+
+    auto *screenshotTitle = new QLabel(tr("Screenshots"), page);
+    screenshotTitle->setFont(titleFont);
+    layout->addSpacing(10);
+    layout->addWidget(screenshotTitle);
+    m_screenshotSave = new QCheckBox(tr("Save screenshots to file"), page);
+    m_screenshotSave->setChecked(settings.value(
+        QStringLiteral("screenshots/saveToFile"), true).toBool());
+    m_screenshotClipboard = new QCheckBox(
+        tr("Copy screenshots to the clipboard"), page);
+    m_screenshotClipboard->setChecked(settings.value(
+        QStringLiteral("screenshots/copyToClipboard"), false).toBool());
+    m_screenshotSubtitles = new QCheckBox(
+        tr("Include subtitles"), page);
+    m_screenshotSubtitles->setChecked(settings.value(
+        QStringLiteral("screenshots/includeSubtitles"), true).toBool());
+    m_screenshotPreview = new QCheckBox(
+        tr("Show preview after capture"), page);
+    m_screenshotPreview->setChecked(settings.value(
+        QStringLiteral("screenshots/showPreview"), true).toBool());
+    layout->addWidget(m_screenshotSave);
+    layout->addWidget(m_screenshotClipboard);
+    layout->addWidget(m_screenshotSubtitles);
+    layout->addWidget(m_screenshotPreview);
+    auto *screenshotForm = new QFormLayout;
+    auto *folderLine = new QHBoxLayout;
+    const QString defaultFolder =
+        QDir(QStandardPaths::writableLocation(
+                 QStandardPaths::PicturesLocation))
+            .filePath(QStringLiteral("Screenshots"));
+    m_screenshotFolder = new QLineEdit(settings.value(
+        QStringLiteral("screenshots/folder"), defaultFolder).toString(),
+        page);
+    auto *chooseFolder = smallButton(tr("Choose…"), page);
+    folderLine->addWidget(m_screenshotFolder, 1);
+    folderLine->addWidget(chooseFolder);
+    connect(chooseFolder, &QPushButton::clicked, this, [this] {
+        const QString folder = QFileDialog::getExistingDirectory(
+            this, tr("Screenshot Folder"),
+            m_screenshotFolder->text());
+        if (!folder.isEmpty()) {
+            m_screenshotFolder->setText(QDir::toNativeSeparators(folder));
+        }
+    });
+    m_screenshotFormat = new QComboBox(page);
+    m_screenshotFormat->addItem(QStringLiteral("PNG"), QStringLiteral("png"));
+    m_screenshotFormat->addItem(QStringLiteral("JPEG"), QStringLiteral("jpg"));
+    m_screenshotFormat->addItem(QStringLiteral("WebP"), QStringLiteral("webp"));
+    m_screenshotFormat->setCurrentIndex(std::max(
+        0, m_screenshotFormat->findData(settings.value(
+            QStringLiteral("screenshots/format"),
+            QStringLiteral("png")).toString())));
+    screenshotForm->addRow(tr("Save to"), folderLine);
+    screenshotForm->addRow(tr("Format"), m_screenshotFormat);
+    layout->addLayout(screenshotForm);
     layout->addStretch();
     return page;
 }
@@ -574,6 +680,32 @@ void PreferencesDialog::applyPreferences()
     settings.setValue(
         QStringLiteral("matching/subtitlePriorityStrings"),
         m_subtitlePriorityStrings->text().trimmed());
+    settings.setValue(
+        QStringLiteral("thumbnails/enabled"),
+        m_thumbnailEnabled->isChecked());
+    settings.setValue(
+        QStringLiteral("thumbnails/width"), m_thumbnailWidth->value());
+    settings.setValue(
+        QStringLiteral("thumbnails/maxCacheMiB"),
+        m_thumbnailCacheSize->value());
+    settings.setValue(
+        QStringLiteral("screenshots/saveToFile"),
+        m_screenshotSave->isChecked());
+    settings.setValue(
+        QStringLiteral("screenshots/copyToClipboard"),
+        m_screenshotClipboard->isChecked());
+    settings.setValue(
+        QStringLiteral("screenshots/includeSubtitles"),
+        m_screenshotSubtitles->isChecked());
+    settings.setValue(
+        QStringLiteral("screenshots/showPreview"),
+        m_screenshotPreview->isChecked());
+    settings.setValue(
+        QStringLiteral("screenshots/folder"),
+        m_screenshotFolder->text().trimmed());
+    settings.setValue(
+        QStringLiteral("screenshots/format"),
+        m_screenshotFormat->currentData().toString());
     settings.setValue(
         QStringLiteral("advanced/enabled"),
         m_enableAdvanced->isChecked());

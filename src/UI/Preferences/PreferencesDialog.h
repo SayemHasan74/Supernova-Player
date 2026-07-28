@@ -12,6 +12,7 @@ class QLineEdit;
 class QPushButton;
 class QTableWidget;
 class QTextEdit;
+class QSpinBox;
 
 class PreferencesDialog final : public QDialog {
     Q_OBJECT
@@ -26,6 +27,7 @@ signals:
 private:
     QWidget *createGeneralPage();
     QWidget *createMatchingPage();
+    QWidget *createMediaToolsPage();
     QWidget *createProfilesPage();
     QWidget *createKeyBindingsPage();
     QWidget *createAdvancedPage();
@@ -55,6 +57,15 @@ private:
     QComboBox *m_subtitleMode = nullptr;
     QLineEdit *m_subtitleSearchPaths = nullptr;
     QLineEdit *m_subtitlePriorityStrings = nullptr;
+    QCheckBox *m_thumbnailEnabled = nullptr;
+    QSpinBox *m_thumbnailWidth = nullptr;
+    QSpinBox *m_thumbnailCacheSize = nullptr;
+    QCheckBox *m_screenshotSave = nullptr;
+    QCheckBox *m_screenshotClipboard = nullptr;
+    QCheckBox *m_screenshotSubtitles = nullptr;
+    QCheckBox *m_screenshotPreview = nullptr;
+    QLineEdit *m_screenshotFolder = nullptr;
+    QComboBox *m_screenshotFormat = nullptr;
 
     QComboBox *m_profile = nullptr;
     QTextEdit *m_mpvConfig = nullptr;

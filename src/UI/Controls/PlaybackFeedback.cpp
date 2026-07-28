@@ -26,21 +26,39 @@ TimelinePreview::TimelinePreview(QWidget *parent)
 void TimelinePreview::showTime(
     double seconds, const QPoint &anchorInParent, int chromeTop)
 {
+    showPreview(seconds, anchorInParent, chromeTop, {});
+}
+
+void TimelinePreview::showPreview(
+    double seconds, const QPoint &anchorInParent, int chromeTop,
+    const QImage &image)
+{
     m_text = formatTime(seconds);
+    m_image = image;
     QFont previewFont =
         QFontDatabase::systemFont(QFontDatabase::FixedFont);
     previewFont.setPixelSize(11);
     const QFontMetrics metrics(previewFont);
-    const int previewWidth =
+    const int imageWidth = m_image.isNull()
+        ? 0 : std::clamp(m_image.width() / 2, 96, 180);
+    const int imageHeight = m_image.isNull()
+        ? 0
+        : qRound(
+              static_cast<double>(imageWidth) * m_image.height()
+              / std::max(1, m_image.width()));
+    const int previewWidth = std::max(
         std::max(48, metrics.horizontalAdvance(m_text)
-                         + previewPaddingX * 2);
-    resize(previewWidth, previewHeight);
+                         + previewPaddingX * 2),
+        imageWidth + (m_image.isNull() ? 0 : 8));
+    const int totalHeight = previewHeight
+        + (m_image.isNull() ? 0 : imageHeight + 5);
+    resize(previewWidth, totalHeight);
     const int parentWidth = parentWidget()
         ? parentWidget()->width() : previewWidth;
     const int x = std::clamp(
         anchorInParent.x() - previewWidth / 2,
         4, std::max(4, parentWidth - previewWidth - 4));
-    const int y = std::max(4, chromeTop - previewHeight - 5);
+    const int y = std::max(4, chromeTop - totalHeight - 5);
     move(x, y);
     show();
     raise();
@@ -67,7 +85,68 @@ void TimelinePreview::paintEvent(QPaintEvent *event)
     previewFont.setPixelSize(11);
     painter.setFont(previewFont);
     painter.setPen(primaryText);
-    painter.drawText(rect(), Qt::AlignCenter, m_text);
+    if (!m_image.isNull()) {
+        const QRect imageRect =
+            rect().adjusted(4, 4, -4, -previewHeight);
+        painter.drawImage(imageRect, m_image);
+    }
+    painter.drawText(
+        QRect(0, height() - previewHeight, width(), previewHeight),
+        Qt::AlignCenter, m_text);
+}
+
+ScreenshotPreview::ScreenshotPreview(QWidget *parent)
+    : QWidget(parent)
+{
+    setObjectName(QStringLiteral("screenshotPreview"));
+    setAttribute(Qt::WA_TransparentForMouseEvents);
+    setAttribute(Qt::WA_TranslucentBackground);
+    m_hideTimer = new QTimer(this);
+    m_hideTimer->setSingleShot(true);
+    m_hideTimer->setInterval(5000);
+    connect(m_hideTimer, &QTimer::timeout, this, &QWidget::hide);
+    hide();
+}
+
+void ScreenshotPreview::showScreenshot(
+    const QImage &image, const QUrl &fileUrl)
+{
+    if (image.isNull()) {
+        return;
+    }
+    m_image = image;
+    m_filename = fileUrl.fileName();
+    const QSize scaled = image.size().scaled(
+        QSize(300, 200), Qt::KeepAspectRatio);
+    resize(scaled.width() + 16, scaled.height() + 42);
+    if (parentWidget()) {
+        move(
+            std::max(8, parentWidget()->width() - width() - 22),
+            22);
+    }
+    show();
+    raise();
+    update();
+    m_hideTimer->start();
+}
+
+void ScreenshotPreview::paintEvent(QPaintEvent *event)
+{
+    Q_UNUSED(event)
+    using namespace Supernova::Ui;
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setPen(QPen(panelBorder, 1.0));
+    painter.setBrush(panelFill);
+    painter.drawRoundedRect(
+        QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 9, 9);
+    painter.drawImage(
+        rect().adjusted(8, 8, -8, -34), m_image);
+    painter.setPen(primaryText);
+    painter.drawText(
+        QRect(10, height() - 28, width() - 20, 20),
+        Qt::AlignLeft | Qt::AlignVCenter,
+        m_filename.isEmpty() ? tr("Screenshot captured") : m_filename);
 }
 
 QString TimelinePreview::formatTime(double seconds)

@@ -162,6 +162,7 @@ QList<ConfiguredKeyBinding> PlayerConfiguration::defaultKeyBindings()
         Binding{QStringLiteral("Ctrl+Shift+p"), QStringLiteral("TogglePlaylist"), {}, true},
         Binding{QStringLiteral("Ctrl+t"), QStringLiteral("ToggleAlwaysOnTop"), {}, true},
         Binding{QStringLiteral("Ctrl+h"), QStringLiteral("ShowPlaybackHistory"), {}, true},
+        Binding{QStringLiteral("Ctrl+i"), QStringLiteral("ShowMediaInspector"), {}, true},
         Binding{QStringLiteral("Ctrl+,"), QStringLiteral("ShowPreferences"), {}, true},
         Binding{QStringLiteral("Ctrl+w"), QStringLiteral("CloseWindow"), {}, true},
         Binding{QStringLiteral("Ctrl+q"), QStringLiteral("QuitApplication"), {}, true},

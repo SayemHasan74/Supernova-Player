@@ -5,7 +5,9 @@
 #include "PlayerCore/PlaybackInfo.h"
 #include "PlayerCore/PlaybackHistory.h"
 #include "PlayerCore/RecentMedia.h"
+#include "PlayerCore/ThumbnailProvider.h"
 
+#include <QImage>
 #include <QList>
 #include <QObject>
 #include <QHash>
@@ -83,6 +85,12 @@ public:
     void seekAbsolute(double seconds);
     void stepFrame(bool backward);
     void takeScreenshot();
+    [[nodiscard]] QImage thumbnailAt(double seconds) const
+    {
+        return m_thumbnails.imageAt(seconds);
+    }
+    [[nodiscard]] QVariant mpvProperty(const QString &name) const;
+    [[nodiscard]] QString mpvPropertyString(const QString &name) const;
 
     void setVolume(double volume);
     void toggleMute();
@@ -141,6 +149,10 @@ signals:
     void historyChanged(
         const QList<PlaybackHistoryEntry> &history);
     void recentMediaChanged(const QList<RecentMediaEntry> &recent);
+    void thumbnailsChanged();
+    void thumbnailsReady();
+    void screenshotCaptured(
+        const QImage &image, const QUrl &fileUrl, bool savedToFile);
     void chaptersChanged(
         const QList<PlaybackChapter> &chapters);
     void chapterChanged(int index);
@@ -209,6 +221,7 @@ private:
     std::unique_ptr<MpvCore> m_mpv;
     PlaybackHistoryStore m_history;
     RecentMediaStore m_recentMedia;
+    ThumbnailProvider m_thumbnails;
     PlaybackInfo m_info;
     QList<QUrl> m_pendingUrls;
     QString m_pendingPlaybackError;
