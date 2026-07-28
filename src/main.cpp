@@ -9,6 +9,7 @@
 #include <QCoreApplication>
 #include <QList>
 #include <QObject>
+#include <QSize>
 #include <QUrl>
 
 #include <exception>
@@ -104,7 +105,9 @@ int main(int argc, char *argv[])
             openWhenRendererReady(mediaUrls(parsedArguments.mediaPaths));
         }
 
-        window.resize(1280, 720);
+        window.resize(
+            parsedArguments.mediaPaths.isEmpty() ? QSize(640, 400)
+                                                 : QSize(1280, 720));
         window.show();
         return app.exec();
     } catch (const std::exception &error) {

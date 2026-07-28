@@ -745,6 +745,7 @@ void PlayerCore::onMpvPropertyChanged(
             m_lastHistorySavePosition = m_info.videoPositionSec;
             m_history.save();
             emit historyChanged(m_history.entries());
+            synchronizePlaylist();
         }
     } else if (name == QStringLiteral("duration")) {
         const double duration = value.toDouble();
@@ -1232,6 +1233,7 @@ void PlayerCore::savePlaybackPosition(bool reachedEnd)
         m_info.videoDurationSec, reachedEnd);
     m_history.save();
     emit historyChanged(m_history.entries());
+    synchronizePlaylist();
     if (!reachedEnd) {
         // IINA explicitly writes mpv's watch-later configuration before
         // stopping. This preserves mpv-managed per-file state as well as the

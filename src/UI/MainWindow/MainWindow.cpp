@@ -9,6 +9,7 @@
 #include "UI/Controls/PlaybackFeedback.h"
 #include "UI/Commands/PlayerCommand.h"
 #include "UI/Playlist/PlaylistPanel.h"
+#include "UI/Welcome/WelcomeView.h"
 #include "UI/Design/DesignTokens.h"
 
 #include <QAction>
@@ -178,6 +179,9 @@ MainWindow::MainWindow(PlayerCore *playerCore, QWidget *parent)
     connect(m_playerCore, &PlayerCore::stateChanged, this,
             [this](PlayerState state) {
                 updateCommandStates();
+                if (state == PlayerState::Idle && !m_closePending) {
+                    showWelcomeView();
+                }
                 if (!m_closePending) {
                     return;
                 }
@@ -223,6 +227,7 @@ MainWindow::MainWindow(PlayerCore *playerCore, QWidget *parent)
             });
     connect(m_playerCore, &PlayerCore::mediaLoaded,
             this, [this] {
+                showPlaybackView();
                 updateCommandStates();
                 revealPlayerChrome(false);
             });
@@ -823,9 +828,22 @@ void MainWindow::setupWindowChrome()
     });
 
     m_progressBar = new ProgressOnlyBar(contentRoot);
+    m_welcomeView = new WelcomeView(contentRoot);
+    m_welcomeView->setHistory(m_playerCore->history());
+    connect(m_welcomeView, &WelcomeView::openFileRequested,
+            this, &MainWindow::openFiles);
+    connect(m_welcomeView, &WelcomeView::openUrlRequested,
+            this, &MainWindow::openUrl);
+    connect(m_welcomeView, &WelcomeView::historyRequested,
+            this, [this](const QUrl &url) {
+                requestOpen({url});
+            });
+    connect(m_playerCore, &PlayerCore::historyChanged,
+            m_welcomeView, &WelcomeView::setHistory);
     m_contentLayout->addWidget(m_playbackPage);
     m_contentLayout->addWidget(m_progressBar);
-    m_contentLayout->setCurrentWidget(m_playbackPage);
+    m_contentLayout->addWidget(m_welcomeView);
+    m_contentLayout->setCurrentWidget(m_welcomeView);
     setCentralWidget(contentRoot);
     m_standardWindowFlags = windowFlags();
     QTimer::singleShot(0, this, [this] {
@@ -1099,6 +1117,25 @@ void MainWindow::openFiles()
         MediaSourceResolver::fromUserInputs(paths));
 }
 
+void MainWindow::openUrl()
+{
+    bool accepted = false;
+    const QString input = QInputDialog::getText(
+        this, tr("Open URL"), tr("Media URL:"),
+        QLineEdit::Normal, QString(), &accepted).trimmed();
+    if (!accepted || input.isEmpty()) {
+        return;
+    }
+    const QUrl url = QUrl::fromUserInput(input);
+    if (!url.isValid() || url.scheme().isEmpty()) {
+        QMessageBox::warning(
+            this, tr("Invalid URL"),
+            tr("Enter a complete media URL."));
+        return;
+    }
+    requestOpen({url});
+}
+
 void MainWindow::openFolder()
 {
     const QString initialDirectory =
@@ -1210,7 +1247,41 @@ void MainWindow::requestOpen(const QList<QUrl> &urls)
             tr("The selection does not contain playable media."));
         return;
     }
+    showPlaybackView();
     emit openUrlsRequested(urls);
+}
+
+void MainWindow::showPlaybackView()
+{
+    if (!m_contentLayout || !m_playbackPage || m_progressMode) {
+        return;
+    }
+    const bool leavingWelcome =
+        m_welcomeView
+        && m_contentLayout->currentWidget() == m_welcomeView;
+    m_contentLayout->setCurrentWidget(m_playbackPage);
+    if (leavingWelcome && !isMaximized() && !isFullScreenMode()) {
+        resize(1280, 720);
+    }
+    positionPlayerChrome();
+    positionPlaybackFeedback();
+}
+
+void MainWindow::showWelcomeView()
+{
+    if (!m_contentLayout || !m_welcomeView || m_progressMode
+        || isFullScreenMode()) {
+        return;
+    }
+    if (m_playlistPanel) {
+        m_playlistPanel->hide();
+    }
+    m_welcomeView->setHistory(m_playerCore->history());
+    m_contentLayout->setCurrentWidget(m_welcomeView);
+    if (!isMaximized()) {
+        resize(640, 400);
+    }
+    setWindowTitle(QStringLiteral("Supernova"));
 }
 
 void MainWindow::enterFullScreen()
@@ -1618,6 +1689,7 @@ void MainWindow::beginShutdown()
     m_timelinePreview = nullptr;
     m_bufferingIndicator = nullptr;
     m_playlistPanel = nullptr;
+    m_welcomeView = nullptr;
     m_progressBar = nullptr;
     m_contentLayout = nullptr;
     m_playerCore->shutdown();

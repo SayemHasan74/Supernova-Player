@@ -54,6 +54,8 @@ qt_add_executable(Supernova WIN32
     src/UI/Controls/PlaybackFeedback.cpp
     src/UI/Playlist/PlaylistPanel.h
     src/UI/Playlist/PlaylistPanel.cpp
+    src/UI/Welcome/WelcomeView.h
+    src/UI/Welcome/WelcomeView.cpp
     src/UI/MainWindow/MainWindow.h
     src/UI/MainWindow/MainWindow.cpp
     resources/app.rc
@@ -288,10 +290,32 @@ if(BUILD_TESTING)
         NAME PlaybackHistory
         COMMAND SupernovaPlaybackHistoryTests)
 
+    qt_add_executable(SupernovaWelcomeViewTests
+        tests/WelcomeViewTests.cpp
+        src/PlayerCore/PlaybackHistory.h
+        src/UI/Welcome/WelcomeView.h
+        src/UI/Welcome/WelcomeView.cpp
+    )
+    target_include_directories(
+        SupernovaWelcomeViewTests PRIVATE src)
+    target_link_libraries(
+        SupernovaWelcomeViewTests PRIVATE
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Widgets
+        Qt6::Test)
+    set_target_properties(
+        SupernovaWelcomeViewTests PROPERTIES
+        WIN32_EXECUTABLE FALSE)
+    add_test(
+        NAME WelcomeView
+        COMMAND SupernovaWelcomeViewTests)
+
     if(WIN32)
         set_tests_properties(
             MediaSourceResolver MpvCore PlayerCoreLifecycle
-            IinaPlayerChrome PlayerCommand PlaybackHistory PROPERTIES
+            IinaPlayerChrome PlayerCommand PlaybackHistory
+            WelcomeView PROPERTIES
             ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
     endif()
