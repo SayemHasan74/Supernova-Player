@@ -1,6 +1,7 @@
 #include "Mpv/MpvCore.h"
 
 #include "Core/Logger.h"
+#include "Network/NetworkConfiguration.h"
 #include "Preferences/PlayerConfiguration.h"
 
 #include <QByteArray>
@@ -16,6 +17,7 @@
 #include <mpv/client.h>
 
 #include <atomic>
+#include <algorithm>
 #include <cstdint>
 #include <stdexcept>
 #include <utility>
@@ -416,6 +418,67 @@ MpvCore::MpvCore(QObject *parent)
         requireInitializationStep(
             mpv_set_option_string(m_mpv, "keep-open", "yes"),
             "Setting keep-open=yes failed");
+        const NetworkConfiguration network =
+            NetworkConfiguration::load();
+        const auto setStartupOption =
+            [this](const char *name, const QString &value) {
+                const QByteArray encoded = value.toUtf8();
+                requireInitializationStep(
+                    mpv_set_option_string(
+                        m_mpv, name, encoded.constData()),
+                    name);
+            };
+        setStartupOption(
+            "cache", network.cacheEnabled
+                ? QStringLiteral("yes") : QStringLiteral("no"));
+        if (network.cacheEnabled) {
+            setStartupOption(
+                "cache-secs",
+                QString::number(std::clamp(
+                    network.cacheSeconds, 0, 86'400)));
+            setStartupOption(
+                "demuxer-max-bytes",
+                QStringLiteral("%1MiB").arg(std::clamp(
+                    network.cacheMemoryMiB, 16, 4096)));
+            setStartupOption(
+                "cache-on-disk", network.cacheOnDisk
+                    ? QStringLiteral("yes") : QStringLiteral("no"));
+        }
+        setStartupOption(
+            "network-timeout",
+            QString::number(std::clamp(
+                network.timeoutSeconds, 1, 3600)));
+        if (!network.proxy.isEmpty()) {
+            setStartupOption("http-proxy", network.proxy);
+        }
+        if (!network.userAgent.isEmpty()) {
+            setStartupOption("user-agent", network.userAgent);
+        }
+        if (!network.referrer.isEmpty()) {
+            setStartupOption("referrer", network.referrer);
+        }
+        if (!network.cookiesFile.isEmpty()) {
+            setStartupOption("cookies", QStringLiteral("yes"));
+            setStartupOption("cookies-file", network.cookiesFile);
+        }
+        setStartupOption(
+            "ytdl", network.ytdlEnabled
+                ? QStringLiteral("yes") : QStringLiteral("no"));
+        if (network.ytdlEnabled) {
+            if (!network.ytdlFormat.isEmpty()) {
+                setStartupOption("ytdl-format", network.ytdlFormat);
+            }
+            const QString scriptOptions =
+                network.ytdlScriptOptions();
+            if (!scriptOptions.isEmpty()) {
+                setStartupOption("script-opts", scriptOptions);
+            }
+            const QString rawOptions =
+                network.ytdlRawOptionList();
+            if (!rawOptions.isEmpty()) {
+                setStartupOption("ytdl-raw-options", rawOptions);
+            }
+        }
         const auto restoreTextOption =
             [this, &settings](const char *option, const char *key) {
                 if (!settings.contains(QString::fromLatin1(key))) {

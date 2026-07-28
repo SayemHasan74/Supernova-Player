@@ -28,6 +28,8 @@ private:
     QWidget *createGeneralPage();
     QWidget *createMatchingPage();
     QWidget *createMediaToolsPage();
+    QWidget *createNetworkPage();
+    QWidget *createOnlineSubtitlesPage();
     QWidget *createProfilesPage();
     QWidget *createKeyBindingsPage();
     QWidget *createAdvancedPage();
@@ -66,6 +68,31 @@ private:
     QCheckBox *m_screenshotPreview = nullptr;
     QLineEdit *m_screenshotFolder = nullptr;
     QComboBox *m_screenshotFormat = nullptr;
+
+    QCheckBox *m_cacheEnabled = nullptr;
+    QSpinBox *m_cacheSeconds = nullptr;
+    QSpinBox *m_cacheMemory = nullptr;
+    QCheckBox *m_cacheOnDisk = nullptr;
+    QSpinBox *m_networkTimeout = nullptr;
+    QLineEdit *m_proxy = nullptr;
+    QLineEdit *m_userAgent = nullptr;
+    QLineEdit *m_referrer = nullptr;
+    QLineEdit *m_cookiesFile = nullptr;
+    QCheckBox *m_ytdlEnabled = nullptr;
+    QLineEdit *m_ytdlPath = nullptr;
+    QLineEdit *m_javascriptRuntime = nullptr;
+    QLineEdit *m_ytdlFormat = nullptr;
+    QLineEdit *m_ytdlRawOptions = nullptr;
+    QCheckBox *m_tryYtdlFirst = nullptr;
+    QCheckBox *m_ytdlSubtitles = nullptr;
+    QCheckBox *m_ytdlAutomaticSubtitles = nullptr;
+
+    QLineEdit *m_openSubtitlesApiKey = nullptr;
+    QLineEdit *m_openSubtitlesToken = nullptr;
+    QLineEdit *m_openSubtitlesUsername = nullptr;
+    QLineEdit *m_openSubtitlesPassword = nullptr;
+    QLineEdit *m_assrtToken = nullptr;
+    QLineEdit *m_onlineSubtitleLanguages = nullptr;
 
     QComboBox *m_profile = nullptr;
     QTextEdit *m_mpvConfig = nullptr;

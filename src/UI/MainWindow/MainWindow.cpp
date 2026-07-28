@@ -14,6 +14,7 @@
 #include "UI/History/HistoryWindow.h"
 #include "UI/Preferences/PreferencesDialog.h"
 #include "UI/Inspector/MediaInspector.h"
+#include "UI/Subtitles/OnlineSubtitleDialog.h"
 #include "UI/Design/DesignTokens.h"
 
 #include <QAction>
@@ -186,6 +187,16 @@ MainWindow::MainWindow(PlayerCore *playerCore, QWidget *parent)
     m_preferencesDialog =
         new PreferencesDialog(m_playerCore, this);
     m_mediaInspector = new MediaInspector(m_playerCore, this);
+    m_onlineSubtitleDialog = new OnlineSubtitleDialog(this);
+    connect(
+        m_onlineSubtitleDialog,
+        &OnlineSubtitleDialog::subtitlesReady,
+        this, [this](const QStringList &paths) {
+            for (const QString &path : paths) {
+                m_playerCore->loadExternalSubtitle(
+                    QUrl::fromLocalFile(path));
+            }
+        });
     connect(m_preferencesDialog,
             &PreferencesDialog::keyBindingsChanged,
             this, &MainWindow::reloadKeyBindings);
@@ -1055,6 +1066,9 @@ void MainWindow::executeCommand(PlayerCommand command)
     case PlayerCommand::OpenFile:
         openFiles();
         break;
+    case PlayerCommand::OpenUrl:
+        openUrl();
+        break;
     case PlayerCommand::OpenFolder:
         openFolder();
         break;
@@ -1131,6 +1145,9 @@ void MainWindow::executeCommand(PlayerCommand command)
         break;
     case PlayerCommand::OpenScreenshotFolder:
         openScreenshotFolder();
+        break;
+    case PlayerCommand::FindOnlineSubtitles:
+        showOnlineSubtitles();
         break;
     case PlayerCommand::ToggleFullScreen:
         toggleFullScreen();
@@ -1269,6 +1286,20 @@ void MainWindow::showMediaInspector()
     if (m_mediaInspector) {
         m_mediaInspector->showInspector();
     }
+}
+
+void MainWindow::showOnlineSubtitles()
+{
+    if (!m_onlineSubtitleDialog) {
+        return;
+    }
+    const QUrl url = m_playerCore->info().currentUrl;
+    QString title = m_playerCore->mpvPropertyString(
+        QStringLiteral("media-title"));
+    if (title.isEmpty()) {
+        title = url.fileName();
+    }
+    m_onlineSubtitleDialog->showForMedia(url, title);
 }
 
 void MainWindow::openScreenshotFolder()

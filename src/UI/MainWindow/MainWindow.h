@@ -31,6 +31,7 @@ class WelcomeView;
 class HistoryWindow;
 class PreferencesDialog;
 class MediaInspector;
+class OnlineSubtitleDialog;
 class QMenu;
 class QPoint;
 enum class PlayerCommand;
@@ -89,6 +90,7 @@ private:
     void reloadKeyBindings();
     void showPlaybackHistory();
     void showMediaInspector();
+    void showOnlineSubtitles();
     void openScreenshotFolder();
     void showPreferences();
     [[nodiscard]] QMenu *menuForCommand(PlayerCommand command) const;
@@ -124,6 +126,7 @@ private:
     HistoryWindow *m_historyWindow = nullptr;
     PreferencesDialog *m_preferencesDialog = nullptr;
     MediaInspector *m_mediaInspector = nullptr;
+    OnlineSubtitleDialog *m_onlineSubtitleDialog = nullptr;
     WelcomeView *m_welcomeView = nullptr;
     ProgressOnlyBar *m_progressBar = nullptr;
     QStackedLayout *m_contentLayout = nullptr;

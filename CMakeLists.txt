@@ -31,6 +31,12 @@ qt_add_executable(Supernova WIN32
     src/App/AutomaticFileMatcher.cpp
     src/Core/Logger.h
     src/Core/Logger.cpp
+    src/Network/NetworkConfiguration.h
+    src/Network/NetworkConfiguration.cpp
+    src/Network/SecureCredentialStore.h
+    src/Network/SecureCredentialStore.cpp
+    src/Network/OnlineSubtitleService.h
+    src/Network/OnlineSubtitleService.cpp
     src/Preferences/PlayerConfiguration.h
     src/Preferences/PlayerConfiguration.cpp
     src/Mpv/MpvCore.h
@@ -74,6 +80,8 @@ qt_add_executable(Supernova WIN32
     src/UI/History/HistoryWindow.cpp
     src/UI/Inspector/MediaInspector.h
     src/UI/Inspector/MediaInspector.cpp
+    src/UI/Subtitles/OnlineSubtitleDialog.h
+    src/UI/Subtitles/OnlineSubtitleDialog.cpp
     src/UI/Preferences/PreferencesDialog.h
     src/UI/Preferences/PreferencesDialog.cpp
     src/UI/MainWindow/MainWindow.h
@@ -94,6 +102,9 @@ target_link_libraries(Supernova PRIVATE
     Qt6::Svg
     Supernova::mpv
 )
+if(WIN32)
+    target_link_libraries(Supernova PRIVATE Advapi32)
+endif()
 
 target_compile_definitions(Supernova PRIVATE
     SUPERNOVA_VERSION="${PROJECT_VERSION}"
@@ -172,6 +183,8 @@ if(BUILD_TESTING)
         src/Mpv/MpvCore.h
         src/Mpv/MpvCore.cpp
         src/Mpv/MpvEvent.h
+        src/Network/NetworkConfiguration.h
+        src/Network/NetworkConfiguration.cpp
         src/Preferences/PlayerConfiguration.h
         src/Preferences/PlayerConfiguration.cpp
     )
@@ -202,6 +215,8 @@ if(BUILD_TESTING)
         src/Mpv/MpvCore.h
         src/Mpv/MpvCore.cpp
         src/Mpv/MpvEvent.h
+        src/Network/NetworkConfiguration.h
+        src/Network/NetworkConfiguration.cpp
         src/Preferences/PlayerConfiguration.h
         src/Preferences/PlayerConfiguration.cpp
         src/PlayerCore/BufferingInfo.h
@@ -269,6 +284,8 @@ if(BUILD_TESTING)
         src/Mpv/MpvCore.h
         src/Mpv/MpvCore.cpp
         src/Mpv/MpvEvent.h
+        src/Network/NetworkConfiguration.h
+        src/Network/NetworkConfiguration.cpp
         src/Preferences/PlayerConfiguration.h
         src/Preferences/PlayerConfiguration.cpp
         src/PlayerCore/BufferingInfo.h
@@ -428,6 +445,31 @@ if(BUILD_TESTING)
         NAME ThumbnailProvider
         COMMAND SupernovaThumbnailProviderTests)
 
+    qt_add_executable(SupernovaOnlineSubtitleServiceTests
+        tests/OnlineSubtitleServiceTests.cpp
+        src/Network/OnlineSubtitleService.h
+        src/Network/OnlineSubtitleService.cpp
+        src/Network/SecureCredentialStore.h
+        src/Network/SecureCredentialStore.cpp
+    )
+    target_include_directories(
+        SupernovaOnlineSubtitleServiceTests PRIVATE src)
+    target_link_libraries(
+        SupernovaOnlineSubtitleServiceTests PRIVATE
+        Qt6::Core
+        Qt6::Network
+        Qt6::Test)
+    if(WIN32)
+        target_link_libraries(
+            SupernovaOnlineSubtitleServiceTests PRIVATE Advapi32)
+    endif()
+    set_target_properties(
+        SupernovaOnlineSubtitleServiceTests PROPERTIES
+        WIN32_EXECUTABLE FALSE)
+    add_test(
+        NAME OnlineSubtitleService
+        COMMAND SupernovaOnlineSubtitleServiceTests)
+
     if(WIN32)
         set_tests_properties(
             MediaSourceResolver MpvCore PlayerCoreLifecycle
@@ -437,6 +479,10 @@ if(BUILD_TESTING)
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
         set_tests_properties(
             ThumbnailProvider PROPERTIES
+            ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+        set_tests_properties(
+            OnlineSubtitleService PROPERTIES
             ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
     endif()

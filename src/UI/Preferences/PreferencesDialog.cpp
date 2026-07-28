@@ -1,10 +1,12 @@
 #include "UI/Preferences/PreferencesDialog.h"
 
 #include "PlayerCore/PlayerCore.h"
+#include "Network/SecureCredentialStore.h"
 
 #include <QAbstractItemView>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QCryptographicHash>
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QFileDialog>
@@ -13,13 +15,20 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QInputDialog>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
 #include <QKeySequenceEdit>
 #include <QMessageBox>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include <QProcess>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QSettings>
+#include <QSaveFile>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QStandardPaths>
@@ -64,6 +73,9 @@ PreferencesDialog::PreferencesDialog(
     tabs->addTab(createGeneralPage(), tr("General"));
     tabs->addTab(createMatchingPage(), tr("Matching"));
     tabs->addTab(createMediaToolsPage(), tr("Media Tools"));
+    tabs->addTab(createNetworkPage(), tr("Network"));
+    tabs->addTab(
+        createOnlineSubtitlesPage(), tr("Online Subtitles"));
     tabs->addTab(createProfilesPage(), tr("Profiles"));
     tabs->addTab(createKeyBindingsPage(), tr("Key Bindings"));
     tabs->addTab(createAdvancedPage(), tr("Advanced"));
@@ -331,6 +343,431 @@ QWidget *PreferencesDialog::createMediaToolsPage()
     screenshotForm->addRow(tr("Save to"), folderLine);
     screenshotForm->addRow(tr("Format"), m_screenshotFormat);
     layout->addLayout(screenshotForm);
+    layout->addStretch();
+    return page;
+}
+
+QWidget *PreferencesDialog::createNetworkPage()
+{
+    auto *page = new QWidget(this);
+    auto *layout = new QVBoxLayout(page);
+    layout->setContentsMargins(18, 18, 18, 18);
+    layout->setSpacing(9);
+    const QSettings settings;
+
+    auto *cacheTitle = new QLabel(tr("Streaming and Cache"), page);
+    QFont titleFont = cacheTitle->font();
+    titleFont.setBold(true);
+    cacheTitle->setFont(titleFont);
+    layout->addWidget(cacheTitle);
+    m_cacheEnabled = new QCheckBox(
+        tr("Enable cache for network media"), page);
+    m_cacheEnabled->setChecked(settings.value(
+        QStringLiteral("network/cacheEnabled"), true).toBool());
+    m_cacheOnDisk = new QCheckBox(
+        tr("Store stream cache in a temporary disk file"), page);
+    m_cacheOnDisk->setChecked(settings.value(
+        QStringLiteral("network/cacheOnDisk"), false).toBool());
+    layout->addWidget(m_cacheEnabled);
+    layout->addWidget(m_cacheOnDisk);
+    auto *cacheForm = new QFormLayout;
+    m_cacheSeconds = new QSpinBox(page);
+    m_cacheSeconds->setRange(0, 86'400);
+    m_cacheSeconds->setSuffix(tr(" s"));
+    m_cacheSeconds->setValue(settings.value(
+        QStringLiteral("network/cacheSeconds"), 60).toInt());
+    m_cacheMemory = new QSpinBox(page);
+    m_cacheMemory->setRange(16, 4096);
+    m_cacheMemory->setSuffix(tr(" MiB"));
+    m_cacheMemory->setValue(settings.value(
+        QStringLiteral("network/cacheMemoryMiB"), 150).toInt());
+    m_networkTimeout = new QSpinBox(page);
+    m_networkTimeout->setRange(1, 3600);
+    m_networkTimeout->setSuffix(tr(" s"));
+    m_networkTimeout->setValue(settings.value(
+        QStringLiteral("network/timeoutSeconds"), 60).toInt());
+    cacheForm->addRow(tr("Read ahead"), m_cacheSeconds);
+    cacheForm->addRow(tr("Maximum memory"), m_cacheMemory);
+    cacheForm->addRow(tr("Network timeout"), m_networkTimeout);
+    layout->addLayout(cacheForm);
+
+    auto *requestTitle = new QLabel(tr("HTTP Requests"), page);
+    requestTitle->setFont(titleFont);
+    layout->addWidget(requestTitle);
+    auto *requestForm = new QFormLayout;
+    m_proxy = new QLineEdit(settings.value(
+        QStringLiteral("network/proxy")).toString(), page);
+    m_proxy->setPlaceholderText(
+        QStringLiteral("http://127.0.0.1:8080"));
+    m_userAgent = new QLineEdit(settings.value(
+        QStringLiteral("network/userAgent")).toString(), page);
+    m_referrer = new QLineEdit(settings.value(
+        QStringLiteral("network/referrer")).toString(), page);
+    m_cookiesFile = new QLineEdit(settings.value(
+        QStringLiteral("network/cookiesFile")).toString(), page);
+    auto *cookiesRow = new QHBoxLayout;
+    cookiesRow->addWidget(m_cookiesFile, 1);
+    auto *chooseCookies = smallButton(tr("Choose…"), page);
+    cookiesRow->addWidget(chooseCookies);
+    requestForm->addRow(tr("Proxy"), m_proxy);
+    requestForm->addRow(tr("User agent"), m_userAgent);
+    requestForm->addRow(tr("Referrer"), m_referrer);
+    requestForm->addRow(tr("Netscape cookies file"), cookiesRow);
+    layout->addLayout(requestForm);
+    connect(chooseCookies, &QPushButton::clicked, this, [this] {
+        const QString path = QFileDialog::getOpenFileName(
+            this, tr("Choose Cookies File"), m_cookiesFile->text(),
+            tr("Cookies (*.txt);;All Files (*)"));
+        if (!path.isEmpty()) m_cookiesFile->setText(path);
+    });
+
+    auto *ytdlTitle = new QLabel(tr("yt-dlp"), page);
+    ytdlTitle->setFont(titleFont);
+    layout->addWidget(ytdlTitle);
+    m_ytdlEnabled = new QCheckBox(
+        tr("Enable yt-dlp for supported websites"), page);
+    m_ytdlEnabled->setChecked(settings.value(
+        QStringLiteral("network/ytdlEnabled"), true).toBool());
+    m_tryYtdlFirst = new QCheckBox(
+        tr("Try yt-dlp before direct network playback"), page);
+    m_tryYtdlFirst->setChecked(settings.value(
+        QStringLiteral("network/tryYtdlFirst"), false).toBool());
+    m_ytdlSubtitles = new QCheckBox(
+        tr("Load subtitles exposed by yt-dlp"), page);
+    m_ytdlSubtitles->setChecked(settings.value(
+        QStringLiteral("network/includeSubtitles"), true).toBool());
+    m_ytdlAutomaticSubtitles = new QCheckBox(
+        tr("Include automatically generated subtitles"), page);
+    m_ytdlAutomaticSubtitles->setChecked(settings.value(
+        QStringLiteral("network/includeAutomaticSubtitles"), false).toBool());
+    layout->addWidget(m_ytdlEnabled);
+    layout->addWidget(m_tryYtdlFirst);
+    layout->addWidget(m_ytdlSubtitles);
+    layout->addWidget(m_ytdlAutomaticSubtitles);
+    auto *ytdlForm = new QFormLayout;
+    m_ytdlPath = new QLineEdit(settings.value(
+        QStringLiteral("network/ytdlPath")).toString(), page);
+    m_ytdlPath->setPlaceholderText(
+        tr("Empty: search PATH for yt-dlp"));
+    auto *ytdlPathRow = new QHBoxLayout;
+    ytdlPathRow->addWidget(m_ytdlPath, 1);
+    auto *chooseYtdl = smallButton(tr("Choose…"), page);
+    auto *checkYtdl = smallButton(tr("Check"), page);
+    auto *updateYtdl = smallButton(tr("Download / Update"), page);
+    ytdlPathRow->addWidget(chooseYtdl);
+    ytdlPathRow->addWidget(checkYtdl);
+    ytdlPathRow->addWidget(updateYtdl);
+    m_javascriptRuntime = new QLineEdit(settings.value(
+        QStringLiteral("network/javascriptRuntime")).toString(), page);
+    m_javascriptRuntime->setPlaceholderText(
+        tr("Optional Deno, Node, QuickJS, or Bun path"));
+    m_ytdlFormat = new QLineEdit(settings.value(
+        QStringLiteral("network/ytdlFormat"),
+        QStringLiteral("bestvideo+bestaudio/best")).toString(), page);
+    m_ytdlRawOptions = new QLineEdit(settings.value(
+        QStringLiteral("network/ytdlRawOptions")).toString(), page);
+    m_ytdlRawOptions->setPlaceholderText(
+        tr("mpv key=value list"));
+    ytdlForm->addRow(tr("Executable"), ytdlPathRow);
+    ytdlForm->addRow(tr("JavaScript runtime"), m_javascriptRuntime);
+    ytdlForm->addRow(tr("Format selection"), m_ytdlFormat);
+    ytdlForm->addRow(tr("Raw options"), m_ytdlRawOptions);
+    layout->addLayout(ytdlForm);
+    connect(chooseYtdl, &QPushButton::clicked, this, [this] {
+        const QString path = QFileDialog::getOpenFileName(
+            this, tr("Choose yt-dlp"), m_ytdlPath->text(),
+            tr("Executables (*.exe);;All Files (*)"));
+        if (!path.isEmpty()) m_ytdlPath->setText(path);
+    });
+    connect(checkYtdl, &QPushButton::clicked, this, [this] {
+        QString executable = m_ytdlPath->text().trimmed();
+        if (executable.isEmpty()) {
+            executable = QStandardPaths::findExecutable(
+                QStringLiteral("yt-dlp"));
+        }
+        if (executable.isEmpty()) {
+            QMessageBox::warning(
+                this, tr("yt-dlp"),
+                tr("yt-dlp was not found. Choose it or use "
+                   "Download / Update."));
+            return;
+        }
+        QProcess process;
+        process.start(executable, {QStringLiteral("--version")});
+        if (!process.waitForStarted(5'000)
+            || !process.waitForFinished(10'000)
+            || process.exitCode() != 0) {
+            QMessageBox::warning(
+                this, tr("yt-dlp"),
+                tr("yt-dlp could not be started:\n%1")
+                    .arg(QString::fromUtf8(
+                        process.readAllStandardError()).trimmed()));
+            return;
+        }
+        QMessageBox::information(
+            this, tr("yt-dlp"),
+            tr("yt-dlp %1 is ready.")
+                .arg(QString::fromUtf8(
+                    process.readAllStandardOutput()).trimmed()));
+    });
+    connect(updateYtdl, &QPushButton::clicked, this,
+            [this, updateYtdl] {
+        updateYtdl->setEnabled(false);
+        updateYtdl->setText(tr("Downloading…"));
+        auto *network = new QNetworkAccessManager(this);
+        QNetworkRequest sumsRequest(QUrl(QStringLiteral(
+            "https://github.com/yt-dlp/yt-dlp/releases/latest/"
+            "download/SHA2-256SUMS")));
+        sumsRequest.setAttribute(
+            QNetworkRequest::RedirectPolicyAttribute,
+            QNetworkRequest::NoLessSafeRedirectPolicy);
+        sumsRequest.setTransferTimeout(30'000);
+        QNetworkReply *sumsReply = network->get(sumsRequest);
+        connect(sumsReply, &QNetworkReply::finished, this,
+                [this, network, sumsReply, updateYtdl] {
+            const auto finish = [network, updateYtdl] {
+                updateYtdl->setEnabled(true);
+                updateYtdl->setText(
+                    QObject::tr("Download / Update"));
+                network->deleteLater();
+            };
+            if (sumsReply->error() != QNetworkReply::NoError) {
+                const QString error = sumsReply->errorString();
+                sumsReply->deleteLater();
+                finish();
+                QMessageBox::warning(
+                    this, tr("yt-dlp"),
+                    tr("Could not download the official checksum: %1")
+                        .arg(error));
+                return;
+            }
+            const QString sums =
+                QString::fromUtf8(sumsReply->readAll());
+            sumsReply->deleteLater();
+            const QRegularExpression expression(
+                QStringLiteral(
+                    R"((?im)^([0-9a-f]{64})\s+\*?yt-dlp\.exe\s*$)"));
+            const QRegularExpressionMatch match =
+                expression.match(sums);
+            if (!match.hasMatch()) {
+                finish();
+                QMessageBox::warning(
+                    this, tr("yt-dlp"),
+                    tr("The official release did not contain a checksum "
+                       "for yt-dlp.exe."));
+                return;
+            }
+            const QByteArray expected =
+                match.captured(1).toLatin1().toLower();
+            QNetworkRequest binaryRequest(QUrl(QStringLiteral(
+                "https://github.com/yt-dlp/yt-dlp/releases/latest/"
+                "download/yt-dlp.exe")));
+            binaryRequest.setAttribute(
+                QNetworkRequest::RedirectPolicyAttribute,
+                QNetworkRequest::NoLessSafeRedirectPolicy);
+            binaryRequest.setTransferTimeout(120'000);
+            QNetworkReply *binaryReply =
+                network->get(binaryRequest);
+            connect(binaryReply, &QNetworkReply::finished, this,
+                    [this, network, binaryReply, updateYtdl,
+                     expected] {
+                const auto finishBinary =
+                    [network, updateYtdl] {
+                        updateYtdl->setEnabled(true);
+                        updateYtdl->setText(
+                            QObject::tr("Download / Update"));
+                        network->deleteLater();
+                    };
+                if (binaryReply->error()
+                    != QNetworkReply::NoError) {
+                    const QString error =
+                        binaryReply->errorString();
+                    binaryReply->deleteLater();
+                    finishBinary();
+                    QMessageBox::warning(
+                        this, tr("yt-dlp"),
+                        tr("Could not download yt-dlp: %1")
+                            .arg(error));
+                    return;
+                }
+                const QByteArray binary = binaryReply->readAll();
+                binaryReply->deleteLater();
+                const QByteArray actual =
+                    QCryptographicHash::hash(
+                        binary, QCryptographicHash::Sha256).toHex();
+                if (binary.isEmpty() || binary.size() > 100 * 1024 * 1024
+                    || actual != expected) {
+                    finishBinary();
+                    QMessageBox::critical(
+                        this, tr("yt-dlp"),
+                        tr("The downloaded executable failed its official "
+                           "SHA-256 verification and was not saved."));
+                    return;
+                }
+                const QString folder = QDir(
+                    QStandardPaths::writableLocation(
+                        QStandardPaths::AppLocalDataLocation))
+                    .filePath(QStringLiteral("yt-dlp"));
+                QDir().mkpath(folder);
+                const QString path =
+                    QDir(folder).filePath(QStringLiteral("yt-dlp.exe"));
+                QSaveFile output(path);
+                if (!output.open(QIODevice::WriteOnly)
+                    || output.write(binary) != binary.size()
+                    || !output.commit()) {
+                    finishBinary();
+                    QMessageBox::warning(
+                        this, tr("yt-dlp"),
+                        tr("Could not save yt-dlp to %1.").arg(path));
+                    return;
+                }
+                m_ytdlPath->setText(path);
+                finishBinary();
+                QMessageBox::information(
+                    this, tr("yt-dlp"),
+                    tr("The verified yt-dlp executable was installed. "
+                       "Apply preferences and restart the player."));
+            });
+        });
+    });
+    auto *restart = new QLabel(
+        tr("Network and yt-dlp changes apply after restarting the player."),
+        page);
+    restart->setWordWrap(true);
+    restart->setStyleSheet(
+        QStringLiteral("color: rgba(235,185,90,200);"));
+    layout->addWidget(restart);
+    layout->addStretch();
+    return page;
+}
+
+QWidget *PreferencesDialog::createOnlineSubtitlesPage()
+{
+    auto *page = new QWidget(this);
+    auto *layout = new QVBoxLayout(page);
+    layout->setContentsMargins(18, 18, 18, 18);
+    layout->setSpacing(10);
+    const QSettings settings;
+
+    auto *explanation = new QLabel(
+        tr("Search is available from the Video menu and the player "
+           "right-click menu. Provider credentials belong to you and are "
+           "never written to logs."),
+        page);
+    explanation->setWordWrap(true);
+    layout->addWidget(explanation);
+    auto *form = new QFormLayout;
+    m_onlineSubtitleLanguages = new QLineEdit(settings.value(
+        QStringLiteral("onlineSubtitles/languages"),
+        QStringLiteral("en")).toString(), page);
+    m_onlineSubtitleLanguages->setPlaceholderText(
+        QStringLiteral("en,fr,de"));
+    m_openSubtitlesApiKey = new QLineEdit(
+        SecureCredentialStore::read(
+            QStringLiteral("openSubtitlesApiKey")), page);
+    m_openSubtitlesApiKey->setEchoMode(QLineEdit::PasswordEchoOnEdit);
+    m_openSubtitlesUsername = new QLineEdit(settings.value(
+        QStringLiteral("onlineSubtitles/openSubtitlesUsername"))
+        .toString(), page);
+    m_openSubtitlesPassword = new QLineEdit(page);
+    m_openSubtitlesPassword->setEchoMode(QLineEdit::Password);
+    auto *loginRow = new QHBoxLayout;
+    loginRow->addWidget(m_openSubtitlesPassword, 1);
+    auto *login = smallButton(tr("Log In"), page);
+    loginRow->addWidget(login);
+    m_openSubtitlesToken = new QLineEdit(
+        SecureCredentialStore::read(
+            QStringLiteral("openSubtitlesToken")), page);
+    m_openSubtitlesToken->setEchoMode(QLineEdit::PasswordEchoOnEdit);
+    m_assrtToken = new QLineEdit(
+        SecureCredentialStore::read(
+            QStringLiteral("assrtToken")), page);
+    m_assrtToken->setEchoMode(QLineEdit::PasswordEchoOnEdit);
+    form->addRow(tr("Preferred languages"), m_onlineSubtitleLanguages);
+    form->addRow(tr("OpenSubtitles API key"), m_openSubtitlesApiKey);
+    form->addRow(
+        tr("OpenSubtitles username"), m_openSubtitlesUsername);
+    form->addRow(
+        tr("OpenSubtitles password"), loginRow);
+    form->addRow(
+        tr("OpenSubtitles login token (optional)"),
+        m_openSubtitlesToken);
+    form->addRow(tr("Assrt API token"), m_assrtToken);
+    layout->addLayout(form);
+    connect(login, &QPushButton::clicked, this, [this, login] {
+        const QString apiKey =
+            m_openSubtitlesApiKey->text().trimmed();
+        const QString username =
+            m_openSubtitlesUsername->text().trimmed();
+        const QString password =
+            m_openSubtitlesPassword->text();
+        if (apiKey.isEmpty() || username.isEmpty()
+            || password.isEmpty()) {
+            QMessageBox::warning(
+                this, tr("OpenSubtitles Login"),
+                tr("Enter the API key, username, and password."));
+            return;
+        }
+        login->setEnabled(false);
+        auto *network = new QNetworkAccessManager(this);
+        QNetworkRequest request(QUrl(QStringLiteral(
+            "https://api.opensubtitles.com/api/v1/login")));
+        request.setAttribute(
+            QNetworkRequest::RedirectPolicyAttribute,
+            QNetworkRequest::NoLessSafeRedirectPolicy);
+        request.setTransferTimeout(30'000);
+        request.setRawHeader("Accept", "application/json");
+        request.setRawHeader("Content-Type", "application/json");
+        request.setRawHeader("Api-Key", apiKey.toUtf8());
+        request.setRawHeader("User-Agent", "Supernova Player v0.1");
+        const QJsonObject body{
+            {QStringLiteral("username"), username},
+            {QStringLiteral("password"), password}};
+        QNetworkReply *reply = network->post(
+            request, QJsonDocument(body).toJson(
+                         QJsonDocument::Compact));
+        connect(reply, &QNetworkReply::finished, this,
+                [this, login, network, reply] {
+            login->setEnabled(true);
+            if (reply->error() != QNetworkReply::NoError) {
+                const QString error = reply->errorString();
+                reply->deleteLater();
+                network->deleteLater();
+                QMessageBox::warning(
+                    this, tr("OpenSubtitles Login"),
+                    tr("Login failed: %1").arg(error));
+                return;
+            }
+            const QJsonObject response =
+                QJsonDocument::fromJson(reply->readAll()).object();
+            reply->deleteLater();
+            network->deleteLater();
+            const QString token =
+                response.value(QStringLiteral("token")).toString();
+            if (token.isEmpty()) {
+                QMessageBox::warning(
+                    this, tr("OpenSubtitles Login"),
+                    tr("Login succeeded but no session token was returned."));
+                return;
+            }
+            m_openSubtitlesToken->setText(token);
+            m_openSubtitlesPassword->clear();
+            QMessageBox::information(
+                this, tr("OpenSubtitles Login"),
+                tr("Login succeeded. Apply preferences to save the "
+                   "protected session token."));
+        });
+    });
+    auto *hint = new QLabel(
+        tr("OpenSubtitles requires an application API key. A login token "
+           "raises account download limits but is optional. Assrt requires "
+           "its 32-character API token. Shooter uses a local-file hash and "
+           "does not need credentials."),
+        page);
+    hint->setWordWrap(true);
+    hint->setStyleSheet(
+        QStringLiteral("color: rgba(235,235,245,160);"));
+    layout->addWidget(hint);
     layout->addStretch();
     return page;
 }
@@ -706,6 +1143,78 @@ void PreferencesDialog::applyPreferences()
     settings.setValue(
         QStringLiteral("screenshots/format"),
         m_screenshotFormat->currentData().toString());
+    settings.setValue(
+        QStringLiteral("network/cacheEnabled"),
+        m_cacheEnabled->isChecked());
+    settings.setValue(
+        QStringLiteral("network/cacheSeconds"),
+        m_cacheSeconds->value());
+    settings.setValue(
+        QStringLiteral("network/cacheMemoryMiB"),
+        m_cacheMemory->value());
+    settings.setValue(
+        QStringLiteral("network/cacheOnDisk"),
+        m_cacheOnDisk->isChecked());
+    settings.setValue(
+        QStringLiteral("network/timeoutSeconds"),
+        m_networkTimeout->value());
+    settings.setValue(
+        QStringLiteral("network/proxy"), m_proxy->text().trimmed());
+    settings.setValue(
+        QStringLiteral("network/userAgent"),
+        m_userAgent->text().trimmed());
+    settings.setValue(
+        QStringLiteral("network/referrer"),
+        m_referrer->text().trimmed());
+    settings.setValue(
+        QStringLiteral("network/cookiesFile"),
+        m_cookiesFile->text().trimmed());
+    settings.setValue(
+        QStringLiteral("network/ytdlEnabled"),
+        m_ytdlEnabled->isChecked());
+    settings.setValue(
+        QStringLiteral("network/ytdlPath"),
+        m_ytdlPath->text().trimmed());
+    settings.setValue(
+        QStringLiteral("network/javascriptRuntime"),
+        m_javascriptRuntime->text().trimmed());
+    settings.setValue(
+        QStringLiteral("network/ytdlFormat"),
+        m_ytdlFormat->text().trimmed());
+    settings.setValue(
+        QStringLiteral("network/ytdlRawOptions"),
+        m_ytdlRawOptions->text().trimmed());
+    settings.setValue(
+        QStringLiteral("network/tryYtdlFirst"),
+        m_tryYtdlFirst->isChecked());
+    settings.setValue(
+        QStringLiteral("network/includeSubtitles"),
+        m_ytdlSubtitles->isChecked());
+    settings.setValue(
+        QStringLiteral("network/includeAutomaticSubtitles"),
+        m_ytdlAutomaticSubtitles->isChecked());
+    settings.setValue(
+        QStringLiteral("onlineSubtitles/languages"),
+        m_onlineSubtitleLanguages->text().trimmed());
+    settings.setValue(
+        QStringLiteral("onlineSubtitles/openSubtitlesUsername"),
+        m_openSubtitlesUsername->text().trimmed());
+    const bool credentialsSaved =
+        SecureCredentialStore::write(
+            QStringLiteral("openSubtitlesApiKey"),
+            m_openSubtitlesApiKey->text().trimmed())
+        && SecureCredentialStore::write(
+            QStringLiteral("openSubtitlesToken"),
+            m_openSubtitlesToken->text().trimmed())
+        && SecureCredentialStore::write(
+            QStringLiteral("assrtToken"),
+            m_assrtToken->text().trimmed());
+    if (!credentialsSaved) {
+        QMessageBox::warning(
+            this, tr("Preferences"),
+            tr("One or more provider credentials could not be "
+               "protected and were not saved."));
+    }
     settings.setValue(
         QStringLiteral("advanced/enabled"),
         m_enableAdvanced->isChecked());

@@ -6,6 +6,7 @@
 
 enum class PlayerCommand {
     OpenFile,
+    OpenUrl,
     OpenFolder,
     ImportPlaylist,
     SavePlaylist,
@@ -31,6 +32,7 @@ enum class PlayerCommand {
     ResetSpeed,
     TakeScreenshot,
     OpenScreenshotFolder,
+    FindOnlineSubtitles,
     ToggleFullScreen,
     ToggleAlwaysOnTop,
     ToggleProgressMode,

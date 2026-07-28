@@ -155,6 +155,7 @@ QList<ConfiguredKeyBinding> PlayerConfiguration::defaultKeyBindings()
         Binding{QStringLiteral("F11"), QStringLiteral("ToggleFullScreen"), {}, true},
         Binding{QStringLiteral("Alt+ENTER"), QStringLiteral("ToggleFullScreen"), {}, true},
         Binding{QStringLiteral("Ctrl+o"), QStringLiteral("OpenFile"), {}, true},
+        Binding{QStringLiteral("Ctrl+u"), QStringLiteral("OpenUrl"), {}, true},
         Binding{QStringLiteral("Ctrl+Shift+o"), QStringLiteral("OpenFolder"), {}, true},
         Binding{QStringLiteral("Ctrl+Shift+i"), QStringLiteral("ImportPlaylist"), {}, true},
         Binding{QStringLiteral("Ctrl+Shift+s"), QStringLiteral("SavePlaylist"), {}, true},

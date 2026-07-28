@@ -15,7 +15,7 @@ private slots:
 void PlayerCommandTests::exposesCompleteUniqueCommandSet()
 {
     const auto &definitions = playerCommandDefinitions();
-    QCOMPARE(definitions.size(), 35);
+    QCOMPARE(definitions.size(), 37);
 
     QSet<int> commands;
     QSet<int> menus;

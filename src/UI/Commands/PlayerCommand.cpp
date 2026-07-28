@@ -5,6 +5,8 @@ const QList<PlayerCommandDefinition> &playerCommandDefinitions()
     static const QList<PlayerCommandDefinition> definitions{
         {PlayerCommand::OpenFile, PlayerMenu::File, QStringLiteral("Open File…"),
          {QStringLiteral("Ctrl+O")}},
+        {PlayerCommand::OpenUrl, PlayerMenu::File, QStringLiteral("Open URL…"),
+         {QStringLiteral("Ctrl+U")}},
         {PlayerCommand::OpenFolder, PlayerMenu::File, QStringLiteral("Open Folder…"),
          {QStringLiteral("Ctrl+Shift+O")}},
         {PlayerCommand::ImportPlaylist, PlayerMenu::File,
@@ -57,6 +59,8 @@ const QList<PlayerCommandDefinition> &playerCommandDefinitions()
          QStringLiteral("Take Screenshot"), {QStringLiteral("S")}, true},
         {PlayerCommand::OpenScreenshotFolder, PlayerMenu::Video,
          QStringLiteral("Open Screenshot Folder"), {}},
+        {PlayerCommand::FindOnlineSubtitles, PlayerMenu::Video,
+         QStringLiteral("Find Online Subtitles…"), {}, true},
         {PlayerCommand::ToggleFullScreen, PlayerMenu::Video,
          QStringLiteral("Enter Full Screen"),
          {QStringLiteral("F"), QStringLiteral("F11"),
@@ -100,6 +104,7 @@ QString playerCommandIdentifier(PlayerCommand command)
 {
     switch (command) {
     case PlayerCommand::OpenFile: return QStringLiteral("OpenFile");
+    case PlayerCommand::OpenUrl: return QStringLiteral("OpenUrl");
     case PlayerCommand::OpenFolder: return QStringLiteral("OpenFolder");
     case PlayerCommand::ImportPlaylist: return QStringLiteral("ImportPlaylist");
     case PlayerCommand::SavePlaylist: return QStringLiteral("SavePlaylist");
@@ -126,6 +131,8 @@ QString playerCommandIdentifier(PlayerCommand command)
     case PlayerCommand::TakeScreenshot: return QStringLiteral("TakeScreenshot");
     case PlayerCommand::OpenScreenshotFolder:
         return QStringLiteral("OpenScreenshotFolder");
+    case PlayerCommand::FindOnlineSubtitles:
+        return QStringLiteral("FindOnlineSubtitles");
     case PlayerCommand::ToggleFullScreen: return QStringLiteral("ToggleFullScreen");
     case PlayerCommand::ToggleAlwaysOnTop: return QStringLiteral("ToggleAlwaysOnTop");
     case PlayerCommand::ToggleProgressMode: return QStringLiteral("ToggleProgressMode");
