@@ -12,10 +12,14 @@
 #include <QFontComboBox>
 #include <QFrame>
 #include <QHBoxLayout>
+#include <QGridLayout>
+#include <QInputDialog>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QScrollArea>
 #include <QSignalBlocker>
 #include <QSlider>
@@ -118,8 +122,16 @@ MediaSettingsPanel::MediaSettingsPanel(
     connect(
         m_playerCore, &PlayerCore::subtitleSettingsChanged,
         this, &MediaSettingsPanel::refreshSubtitleSettings);
+    connect(
+        m_playerCore, &PlayerCore::videoQuickSettingsChanged,
+        this, &MediaSettingsPanel::refreshVideoSettings);
+    connect(
+        m_playerCore, &PlayerCore::audioQuickSettingsChanged,
+        this, &MediaSettingsPanel::refreshAudioSettings);
     refreshTracks(m_playerCore->info().tracks);
     refreshSubtitleSettings(m_playerCore->info().subtitles);
+    refreshVideoSettings(m_playerCore->info().videoSettings);
+    refreshAudioSettings(m_playerCore->info().audioSettings);
     hide();
 }
 
@@ -162,6 +174,10 @@ QWidget *MediaSettingsPanel::createTrackPage(MediaTrackType type)
             : tr("Load External Audio…"),
         page);
     layout->addWidget(load);
+    layout->addWidget(
+        type == MediaTrackType::Video
+            ? createVideoControls(page)
+            : createAudioControls(page));
     layout->addStretch();
 
     connect(list, &QListWidget::itemClicked, this,
@@ -177,7 +193,380 @@ QWidget *MediaSettingsPanel::createTrackPage(MediaTrackType type)
             });
     connect(load, &QPushButton::clicked, this,
             [this, type] { chooseExternalFile(type); });
-    return page;
+    auto *scroll = new QScrollArea(this);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scroll->setWidget(page);
+    return scroll;
+}
+
+QWidget *MediaSettingsPanel::createVideoControls(QWidget *parent)
+{
+    auto *container = new QWidget(parent);
+    auto *layout = new QVBoxLayout(container);
+    layout->setContentsMargins(0, 4, 0, 4);
+    layout->setSpacing(8);
+
+    auto makeComboRow = [layout, container](
+                            const QString &title, QComboBox *&combo) {
+        auto *row = new QHBoxLayout;
+        row->addWidget(sectionLabel(title, container));
+        combo = new QComboBox(container);
+        row->addWidget(combo, 1);
+        layout->addLayout(row);
+    };
+    makeComboRow(tr("Aspect Ratio"), m_aspect);
+    m_aspect->setEditable(true);
+    m_aspect->addItems(
+        {QStringLiteral("Default"), QStringLiteral("4:3"),
+         QStringLiteral("16:9"), QStringLiteral("16:10"),
+         QStringLiteral("21:9"), QStringLiteral("5:4")});
+    makeComboRow(tr("Crop"), m_crop);
+    m_crop->addItems(
+        {QStringLiteral("None"), QStringLiteral("4:3"),
+         QStringLiteral("16:9"), QStringLiteral("16:10"),
+         QStringLiteral("21:9"), QStringLiteral("5:4"),
+         tr("Custom…")});
+    makeComboRow(tr("Rotation"), m_rotation);
+    for (int rotation : {0, 90, 180, 270}) {
+        m_rotation->addItem(
+            QStringLiteral("%1°").arg(rotation), rotation);
+    }
+
+    auto *switches = new QGridLayout;
+    m_hardwareDecoding =
+        new QCheckBox(tr("Hardware Decoding"), container);
+    m_deinterlace = new QCheckBox(tr("Deinterlace"), container);
+    m_flip = new QCheckBox(tr("Flip Vertically"), container);
+    m_mirror = new QCheckBox(tr("Mirror Horizontally"), container);
+    switches->addWidget(m_hardwareDecoding, 0, 0);
+    switches->addWidget(m_deinterlace, 0, 1);
+    switches->addWidget(m_flip, 1, 0);
+    switches->addWidget(m_mirror, 1, 1);
+    layout->addLayout(switches);
+
+    layout->addWidget(sectionLabel(tr("Color Controls"), container));
+    for (const auto &[property, title] :
+         QList<QPair<QString, QString>>{
+             {QStringLiteral("brightness"), tr("Brightness")},
+             {QStringLiteral("contrast"), tr("Contrast")},
+             {QStringLiteral("saturation"), tr("Saturation")},
+             {QStringLiteral("gamma"), tr("Gamma")},
+             {QStringLiteral("hue"), tr("Hue")}}) {
+        auto *row = new QHBoxLayout;
+        auto *label = new QLabel(title, container);
+        label->setMinimumWidth(70);
+        row->addWidget(label);
+        auto *slider = new QSlider(Qt::Horizontal, container);
+        slider->setRange(-100, 100);
+        slider->setProperty("mpvProperty", property);
+        row->addWidget(slider, 1);
+        auto *reset = flatButton(QStringLiteral("↺"), container);
+        reset->setFixedSize(26, 26);
+        row->addWidget(reset);
+        layout->addLayout(row);
+        m_videoColorSliders.insert(property, slider);
+        connect(slider, &QSlider::valueChanged, this,
+                [this, property](int value) {
+                    if (!m_refreshing) {
+                        m_playerCore->setVideoColor(property, value);
+                    }
+                });
+        connect(reset, &QPushButton::clicked, slider,
+                [slider] { slider->setValue(0); });
+    }
+
+    layout->addWidget(sectionLabel(tr("Video Filters"), container));
+    m_videoFilters = createTrackList(
+        QStringLiteral("videoFilterList"));
+    m_videoFilters->setMaximumHeight(104);
+    layout->addWidget(m_videoFilters);
+    auto *filterButtons = new QHBoxLayout;
+    auto *add = flatButton(tr("Add Filter…"), container);
+    auto *remove = flatButton(tr("Remove"), container);
+    filterButtons->addWidget(add, 1);
+    filterButtons->addWidget(remove);
+    layout->addLayout(filterButtons);
+
+    connect(m_aspect, &QComboBox::currentTextChanged,
+            m_playerCore, [this](const QString &value) {
+                if (!m_refreshing) {
+                    m_playerCore->setVideoAspect(value);
+                }
+            });
+    connect(m_crop, &QComboBox::currentIndexChanged,
+            this, [this](int index) {
+                if (m_refreshing || index < 0) {
+                    return;
+                }
+                if (index == m_crop->count() - 1) {
+                    bool accepted = false;
+                    const QString geometry = QInputDialog::getText(
+                        this, tr("Custom Crop"),
+                        tr("Width × Height, optionally : X : Y"),
+                        QLineEdit::Normal, QString(), &accepted);
+                    const QRegularExpression expression(
+                        QStringLiteral(
+                            R"(^\s*(\d+)\s*[x×:]\s*(\d+)(?:\s*:\s*(\d+)\s*:\s*(\d+))?\s*$)"));
+                    const auto match = expression.match(geometry);
+                    if (accepted && match.hasMatch()) {
+                        m_playerCore->setVideoCropGeometry(
+                            match.captured(1).toInt(),
+                            match.captured(2).toInt(),
+                            match.captured(3).isEmpty()
+                                ? -1 : match.captured(3).toInt(),
+                            match.captured(4).isEmpty()
+                                ? -1 : match.captured(4).toInt());
+                    }
+                    return;
+                }
+                m_playerCore->setVideoCrop(
+                    m_crop->currentText());
+            });
+    connect(m_rotation, &QComboBox::currentIndexChanged,
+            this, [this](int index) {
+                if (!m_refreshing && index >= 0) {
+                    m_playerCore->setVideoRotation(
+                        m_rotation->itemData(index).toInt());
+                }
+            });
+    connect(m_hardwareDecoding, &QCheckBox::toggled,
+            this, [this](bool checked) {
+                if (!m_refreshing) {
+                    m_playerCore->setHardwareDecoding(checked);
+                }
+            });
+    connect(m_deinterlace, &QCheckBox::toggled,
+            this, [this](bool checked) {
+                if (!m_refreshing) {
+                    m_playerCore->setDeinterlace(checked);
+                }
+            });
+    connect(m_flip, &QCheckBox::toggled,
+            this, [this](bool checked) {
+                if (!m_refreshing) {
+                    m_playerCore->setVideoFlip(checked);
+                }
+            });
+    connect(m_mirror, &QCheckBox::toggled,
+            this, [this](bool checked) {
+                if (!m_refreshing) {
+                    m_playerCore->setVideoMirror(checked);
+                }
+            });
+    connect(add, &QPushButton::clicked,
+            this, [this] { promptForFilter(true); });
+    connect(remove, &QPushButton::clicked,
+            this, [this] {
+                if (QListWidgetItem *item =
+                        m_videoFilters->currentItem()) {
+                    m_playerCore->removeVideoFilter(
+                        item->data(Qt::UserRole).toString());
+                }
+            });
+    return container;
+}
+
+QWidget *MediaSettingsPanel::createAudioControls(QWidget *parent)
+{
+    auto *container = new QWidget(parent);
+    auto *layout = new QVBoxLayout(container);
+    layout->setContentsMargins(0, 4, 0, 4);
+    layout->setSpacing(8);
+
+    auto *deviceRow = new QHBoxLayout;
+    deviceRow->addWidget(sectionLabel(tr("Output Device"), container));
+    m_audioDevice = new QComboBox(container);
+    deviceRow->addWidget(m_audioDevice, 1);
+    layout->addLayout(deviceRow);
+
+    auto *channelRow = new QHBoxLayout;
+    channelRow->addWidget(sectionLabel(tr("Channels"), container));
+    m_audioChannels = new QComboBox(container);
+    const QList<QPair<QString, QString>> channels{
+        {tr("Auto Safe"), QStringLiteral("auto-safe")},
+        {tr("Auto"), QStringLiteral("auto")},
+        {tr("Mono"), QStringLiteral("mono")},
+        {tr("Stereo"), QStringLiteral("stereo")},
+        {QStringLiteral("2.1"), QStringLiteral("2.1")},
+        {QStringLiteral("5.1"), QStringLiteral("5.1")},
+        {QStringLiteral("7.1"), QStringLiteral("7.1")}};
+    for (const auto &[title, value] : channels) {
+        m_audioChannels->addItem(title, value);
+    }
+    channelRow->addWidget(m_audioChannels, 1);
+    layout->addLayout(channelRow);
+
+    auto *delayRow = new QHBoxLayout;
+    delayRow->addWidget(sectionLabel(tr("Audio Delay"), container));
+    m_audioDelaySlider = new QSlider(Qt::Horizontal, container);
+    m_audioDelaySlider->setRange(-100, 100);
+    delayRow->addWidget(m_audioDelaySlider, 1);
+    m_audioDelay = new QDoubleSpinBox(container);
+    m_audioDelay->setRange(-3600.0, 3600.0);
+    m_audioDelay->setDecimals(2);
+    m_audioDelay->setSingleStep(0.05);
+    m_audioDelay->setSuffix(tr(" s"));
+    delayRow->addWidget(m_audioDelay);
+    layout->addLayout(delayRow);
+
+    auto *presetRow = new QHBoxLayout;
+    presetRow->addWidget(sectionLabel(tr("Equalizer"), container));
+    m_equalizerPreset = new QComboBox(container);
+    presetRow->addWidget(m_equalizerPreset, 1);
+    layout->addLayout(presetRow);
+
+    struct Preset {
+        const char *name;
+        std::array<double, 10> gains;
+    };
+    const QList<Preset> presets{
+        {"Flat", {0,0,0,0,0,0,0,0,0,0}},
+        {"Acoustic", {5,4.9,3.95,1.05,2.15,1.75,3.5,4.1,3.55,2.15}},
+        {"Classical", {4.75,3.75,3,2.5,-1.5,-1.5,0,2.25,3.25,3.75}},
+        {"Dance", {3.57,6.55,4.99,0,1.92,3.65,5.15,4.54,3.59,0}},
+        {"Deep", {4.95,3.55,1.75,1,2.85,2.5,1.45,-2.15,-3.55,-4.6}},
+        {"Electronic", {4.25,3.8,1.2,0,-2.15,2.25,.85,1.25,3.95,4.8}},
+        {"Hip Hop", {5,4.25,1.5,3,-1,-1,1.5,-.5,2,3}},
+        {"Increase Bass", {5.5,4.25,3.5,2.5,1.25,0,0,0,0,0}},
+        {"Increase Treble", {0,0,0,0,0,1.25,2.5,3.5,4.25,5.5}},
+        {"Increase Vocal", {-1.5,-3,-3,1.5,3.75,3.75,3,1.5,0,-1.5}},
+        {"Jazz", {4,3,1.5,2.25,-1.5,-1.5,0,1.5,3,3.75}},
+        {"Latin", {4.5,3,0,0,-1.5,-1.5,-1.5,0,3,4.5}},
+        {"Loudness", {6,4,0,0,-2,0,-1,-5,5,1}},
+        {"Lounge", {-3,-1.5,-.5,1.5,4,2.5,0,-1.5,2,1}},
+        {"Piano", {3,2,0,2.5,3,1.5,3.5,4.5,3,3.5}},
+        {"Pop", {-1.5,-1,0,2,4,4,2,0,-1,-1.5}},
+        {"R&B", {2.62,6.92,5.65,1.33,-2.19,-1.5,2.32,2.65,3,3.75}},
+        {"Reduce Bass", {-5.5,-4.25,-3.5,-2.5,-1.25,0,0,0,0,0}},
+        {"Reduce Treble", {0,0,0,0,0,-1.25,-2.5,-3.5,-4.25,-5.5}},
+        {"Rock", {5,4,3,1.5,-.5,-1,.5,2.5,3.5,4.5}},
+        {"Small Speaker", {5.5,4.25,3.5,2.5,1.25,0,-1.25,-2.5,-3.5,-4.25}},
+        {"Spoken Word", {-3.46,-.47,0,.69,3.46,4.61,4.84,4.28,2.54,0}}};
+    for (const Preset &preset : presets) {
+        QVariantList gains;
+        for (double gain : preset.gains) {
+            gains.append(gain);
+        }
+        m_equalizerPreset->addItem(
+            QString::fromLatin1(preset.name), gains);
+    }
+
+    auto *equalizer = new QHBoxLayout;
+    static constexpr std::array<const char *, 10> labels{
+        "32", "64", "125", "250", "500",
+        "1k", "2k", "4k", "8k", "16k"};
+    for (std::size_t index = 0; index < labels.size(); ++index) {
+        auto *band = new QVBoxLayout;
+        auto *slider = new QSlider(Qt::Vertical, container);
+        slider->setRange(-120, 120);
+        slider->setValue(0);
+        slider->setMinimumHeight(105);
+        m_equalizerSliders[index] = slider;
+        band->addWidget(slider, 1, Qt::AlignHCenter);
+        auto *label =
+            new QLabel(QString::fromLatin1(labels[index]), container);
+        label->setAlignment(Qt::AlignCenter);
+        label->setStyleSheet(QStringLiteral("font-size:9px;"));
+        band->addWidget(label);
+        equalizer->addLayout(band);
+        connect(slider, &QSlider::valueChanged,
+                this, [this](int) {
+                    if (m_refreshing) {
+                        return;
+                    }
+                    std::array<double, 10> gains{};
+                    for (std::size_t band = 0;
+                         band < gains.size(); ++band) {
+                        gains[band] =
+                            m_equalizerSliders[band]->value() / 10.0;
+                    }
+                    m_playerCore->setAudioEqualizer(gains);
+                });
+    }
+    layout->addLayout(equalizer);
+
+    layout->addWidget(sectionLabel(tr("Audio Filters"), container));
+    m_audioFilters = createTrackList(
+        QStringLiteral("audioFilterList"));
+    m_audioFilters->setMaximumHeight(104);
+    layout->addWidget(m_audioFilters);
+    auto *filterButtons = new QHBoxLayout;
+    auto *add = flatButton(tr("Add Filter…"), container);
+    auto *remove = flatButton(tr("Remove"), container);
+    filterButtons->addWidget(add, 1);
+    filterButtons->addWidget(remove);
+    layout->addLayout(filterButtons);
+
+    connect(m_audioDevice, &QComboBox::currentIndexChanged,
+            this, [this](int index) {
+                if (!m_refreshing && index >= 0) {
+                    m_playerCore->setAudioDevice(
+                        m_audioDevice->itemData(index).toString());
+                }
+            });
+    connect(m_audioChannels, &QComboBox::currentIndexChanged,
+            this, [this](int index) {
+                if (!m_refreshing && index >= 0) {
+                    m_playerCore->setAudioChannels(
+                        m_audioChannels->itemData(index).toString());
+                }
+            });
+    connect(m_audioDelay,
+            qOverload<double>(&QDoubleSpinBox::valueChanged),
+            this, [this](double value) {
+                if (!m_refreshing) {
+                    m_playerCore->setAudioDelay(value);
+                }
+            });
+    connect(m_audioDelaySlider, &QSlider::valueChanged,
+            this, [this](int value) {
+                if (m_refreshing) {
+                    return;
+                }
+                const double delay = value / 20.0;
+                {
+                    const QSignalBlocker blocker(m_audioDelay);
+                    m_audioDelay->setValue(delay);
+                }
+                m_playerCore->setAudioDelay(delay);
+            });
+    connect(m_equalizerPreset, &QComboBox::currentIndexChanged,
+            this, [this](int index) {
+                if (m_refreshing || index < 0) {
+                    return;
+                }
+                const QVariantList values =
+                    m_equalizerPreset->itemData(index).toList();
+                std::array<double, 10> gains{};
+                for (qsizetype band = 0;
+                     band < values.size()
+                     && band < static_cast<qsizetype>(gains.size());
+                     ++band) {
+                    gains[static_cast<std::size_t>(band)] =
+                        values[band].toDouble();
+                }
+                m_refreshing = true;
+                for (std::size_t band = 0;
+                     band < gains.size(); ++band) {
+                    m_equalizerSliders[band]->setValue(
+                        qRound(gains[band] * 10.0));
+                }
+                m_refreshing = false;
+                m_playerCore->setAudioEqualizer(gains);
+            });
+    connect(add, &QPushButton::clicked,
+            this, [this] { promptForFilter(false); });
+    connect(remove, &QPushButton::clicked,
+            this, [this] {
+                if (QListWidgetItem *item =
+                        m_audioFilters->currentItem()) {
+                    m_playerCore->removeAudioFilter(
+                        item->data(Qt::UserRole).toString());
+                }
+            });
+    return container;
 }
 
 QWidget *MediaSettingsPanel::createSubtitlePage()
@@ -561,6 +950,115 @@ void MediaSettingsPanel::refreshSubtitleSettings(
         colorFromMpv(settings.backgroundColor));
     setSwatch(m_borderColor, colorFromMpv(settings.borderColor));
     m_refreshing = false;
+}
+
+void MediaSettingsPanel::populateFilterList(
+    QListWidget *list, const QList<MediaFilterInfo> &filters)
+{
+    if (!list) {
+        return;
+    }
+    const QSignalBlocker blocker(list);
+    list->clear();
+    for (const MediaFilterInfo &filter : filters) {
+        auto *item =
+            new QListWidgetItem(filter.description, list);
+        item->setData(Qt::UserRole, filter.label);
+        item->setToolTip(filter.description);
+        if (!filter.managed) {
+            item->setForeground(QColor(170, 170, 176));
+        }
+    }
+}
+
+void MediaSettingsPanel::refreshVideoSettings(
+    const VideoQuickSettings &settings)
+{
+    m_refreshing = true;
+    const int aspectIndex = m_aspect->findText(settings.aspectRatio);
+    if (aspectIndex >= 0) {
+        m_aspect->setCurrentIndex(aspectIndex);
+    } else {
+        m_aspect->setEditText(settings.aspectRatio);
+    }
+    const int cropIndex = m_crop->findText(settings.crop);
+    m_crop->setCurrentIndex(
+        cropIndex >= 0 ? cropIndex : m_crop->count() - 1);
+    const int rotationIndex =
+        m_rotation->findData(settings.rotation);
+    if (rotationIndex >= 0) {
+        m_rotation->setCurrentIndex(rotationIndex);
+    }
+    m_hardwareDecoding->setChecked(settings.hardwareDecoding);
+    m_deinterlace->setChecked(settings.deinterlace);
+    m_flip->setChecked(settings.flipped);
+    m_mirror->setChecked(settings.mirrored);
+    const QHash<QString, int> colors{
+        {QStringLiteral("brightness"), settings.brightness},
+        {QStringLiteral("contrast"), settings.contrast},
+        {QStringLiteral("saturation"), settings.saturation},
+        {QStringLiteral("gamma"), settings.gamma},
+        {QStringLiteral("hue"), settings.hue}};
+    for (auto it = colors.cbegin(); it != colors.cend(); ++it) {
+        if (QSlider *slider = m_videoColorSliders.value(it.key())) {
+            slider->setValue(it.value());
+        }
+    }
+    populateFilterList(m_videoFilters, settings.filters);
+    m_refreshing = false;
+}
+
+void MediaSettingsPanel::refreshAudioSettings(
+    const AudioQuickSettings &settings)
+{
+    m_refreshing = true;
+    m_audioDevice->clear();
+    for (const AudioOutputDevice &device : settings.devices) {
+        m_audioDevice->addItem(device.displayName(), device.name);
+    }
+    if (m_audioDevice->findData(QStringLiteral("auto")) < 0) {
+        m_audioDevice->insertItem(
+            0, tr("[Autoselect device] auto"),
+            QStringLiteral("auto"));
+    }
+    const int deviceIndex =
+        m_audioDevice->findData(settings.selectedDevice);
+    m_audioDevice->setCurrentIndex(
+        deviceIndex >= 0 ? deviceIndex : 0);
+    const int channelsIndex =
+        m_audioChannels->findData(settings.channels);
+    if (channelsIndex >= 0) {
+        m_audioChannels->setCurrentIndex(channelsIndex);
+    }
+    m_audioDelay->setValue(settings.delay);
+    m_audioDelaySlider->setValue(qRound(
+        std::clamp(settings.delay, -5.0, 5.0) * 20.0));
+    for (std::size_t index = 0;
+         index < settings.equalizer.size(); ++index) {
+        m_equalizerSliders[index]->setValue(
+            qRound(settings.equalizer[index] * 10.0));
+    }
+    populateFilterList(m_audioFilters, settings.filters);
+    m_refreshing = false;
+}
+
+void MediaSettingsPanel::promptForFilter(bool video)
+{
+    bool accepted = false;
+    const QString filter = QInputDialog::getText(
+        this,
+        video ? tr("Add Video Filter") : tr("Add Audio Filter"),
+        video ? tr("mpv video filter:")
+              : tr("mpv audio filter:"),
+        QLineEdit::Normal, QString(), &accepted);
+    if (!accepted || filter.trimmed().isEmpty()) {
+        return;
+    }
+    if (video) {
+        m_playerCore->addVideoFilter(filter);
+    } else {
+        m_playerCore->addAudioFilter(filter);
+    }
 }
 
 void MediaSettingsPanel::chooseExternalFile(MediaTrackType type)

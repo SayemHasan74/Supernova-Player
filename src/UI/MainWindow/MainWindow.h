@@ -17,7 +17,6 @@ class QResizeEvent;
 class QStackedLayout;
 class QTimer;
 class IinaPlayerChrome;
-class PlaybackOsd;
 class TimelinePreview;
 class BufferingIndicator;
 class MpvVideoSurface;
@@ -96,9 +95,6 @@ private:
     void showPlaybackContextMenu(const QPoint &globalPosition);
     void positionPlayerChrome();
     void positionPlaybackFeedback();
-    void showPlaybackOsd(
-        const QString &title, const QString &detail = QString(),
-        double progress = -1.0);
     void syncFullScreenUi();
     void setupMenus();
     void setupWindowChrome();
@@ -108,7 +104,6 @@ private:
     MpvVideoSurface *m_videoSurface = nullptr;
     QWidget *m_playbackPage = nullptr;
     IinaPlayerChrome *m_playerChrome = nullptr;
-    PlaybackOsd *m_playbackOsd = nullptr;
     TimelinePreview *m_timelinePreview = nullptr;
     BufferingIndicator *m_bufferingIndicator = nullptr;
     PlaylistPanel *m_playlistPanel = nullptr;

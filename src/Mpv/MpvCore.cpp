@@ -413,6 +413,7 @@ MpvCore::MpvCore(QObject *parent)
         restoreTextOption(
             "secondary-sub-ass-override",
             "subtitles/assOverride");
+        restoreTextOption("audio-device", "audio/device");
         requireInitializationStep(
             mpv_request_log_messages(m_mpv, "warn"),
             "Requesting mpv log messages failed");
@@ -455,6 +456,23 @@ MpvCore::MpvCore(QObject *parent)
         observe(QStringLiteral("ab-loop-a"), MPV_FORMAT_DOUBLE);
         observe(QStringLiteral("ab-loop-b"), MPV_FORMAT_DOUBLE);
         observe(QStringLiteral("speed"), MPV_FORMAT_DOUBLE);
+        observe(
+            QStringLiteral("video-aspect-override"),
+            MPV_FORMAT_STRING);
+        observe(QStringLiteral("video-rotate"), MPV_FORMAT_INT64);
+        observe(QStringLiteral("deinterlace"), MPV_FORMAT_FLAG);
+        observe(QStringLiteral("hwdec"), MPV_FORMAT_STRING);
+        observe(QStringLiteral("brightness"), MPV_FORMAT_INT64);
+        observe(QStringLiteral("contrast"), MPV_FORMAT_INT64);
+        observe(QStringLiteral("saturation"), MPV_FORMAT_INT64);
+        observe(QStringLiteral("gamma"), MPV_FORMAT_INT64);
+        observe(QStringLiteral("hue"), MPV_FORMAT_INT64);
+        observe(QStringLiteral("vf"), MPV_FORMAT_NODE);
+        observe(QStringLiteral("audio-device-list"), MPV_FORMAT_NODE);
+        observe(QStringLiteral("audio-device"), MPV_FORMAT_STRING);
+        observe(QStringLiteral("audio-channels"), MPV_FORMAT_STRING);
+        observe(QStringLiteral("audio-delay"), MPV_FORMAT_DOUBLE);
+        observe(QStringLiteral("af"), MPV_FORMAT_NODE);
         observe(QStringLiteral("idle-active"), MPV_FORMAT_FLAG);
         observe(QStringLiteral("eof-reached"), MPV_FORMAT_FLAG);
         observe(QStringLiteral("paused-for-cache"), MPV_FORMAT_FLAG);

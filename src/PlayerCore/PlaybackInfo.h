@@ -5,6 +5,7 @@
 #include "PlayerCore/PlaylistState.h"
 #include "PlayerCore/NavigationState.h"
 #include "PlayerCore/MediaTrack.h"
+#include "PlayerCore/QuickSettings.h"
 
 #include <QString>
 #include <QUrl>
@@ -36,6 +37,8 @@ struct PlaybackInfo {
     AbLoopState abLoop;
     MediaTrackState tracks;
     SubtitleSettings subtitles;
+    VideoQuickSettings videoSettings;
+    AudioQuickSettings audioSettings;
 
     bool justOpenedFile = false;
 };

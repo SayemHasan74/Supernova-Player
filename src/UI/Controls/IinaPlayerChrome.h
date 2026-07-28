@@ -110,8 +110,6 @@ signals:
     void progressModeRequested();
     void previewRequested(double seconds, const QPoint &globalAnchor);
     void previewDismissed();
-    void osdRequested(
-        const QString &title, const QString &detail, double progress);
 
 protected:
     void enterEvent(QEnterEvent *event) override;

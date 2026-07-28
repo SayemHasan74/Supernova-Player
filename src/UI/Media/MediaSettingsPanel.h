@@ -1,8 +1,12 @@
 #pragma once
 
 #include "PlayerCore/MediaTrack.h"
+#include "PlayerCore/QuickSettings.h"
 
 #include <QWidget>
+#include <QHash>
+
+#include <array>
 
 class QCheckBox;
 class QColor;
@@ -28,10 +32,17 @@ signals:
 
 private:
     QWidget *createTrackPage(MediaTrackType type);
+    QWidget *createVideoControls(QWidget *parent);
+    QWidget *createAudioControls(QWidget *parent);
     QWidget *createSubtitlePage();
     QListWidget *createTrackList(const QString &objectName);
     void refreshTracks(const MediaTrackState &tracks);
     void refreshSubtitleSettings(const SubtitleSettings &settings);
+    void refreshVideoSettings(const VideoQuickSettings &settings);
+    void refreshAudioSettings(const AudioQuickSettings &settings);
+    void populateFilterList(
+        QListWidget *list, const QList<MediaFilterInfo> &filters);
+    void promptForFilter(bool video);
     void populateTrackList(
         QListWidget *list, const QList<MediaTrack> &tracks,
         int selectedId);
@@ -68,5 +79,21 @@ private:
     QPushButton *m_backgroundColor = nullptr;
     QPushButton *m_borderColor = nullptr;
     QLabel *m_styleWarning = nullptr;
+    QComboBox *m_aspect = nullptr;
+    QComboBox *m_crop = nullptr;
+    QComboBox *m_rotation = nullptr;
+    QCheckBox *m_hardwareDecoding = nullptr;
+    QCheckBox *m_deinterlace = nullptr;
+    QCheckBox *m_flip = nullptr;
+    QCheckBox *m_mirror = nullptr;
+    QHash<QString, QSlider *> m_videoColorSliders;
+    QListWidget *m_videoFilters = nullptr;
+    QComboBox *m_audioDevice = nullptr;
+    QComboBox *m_audioChannels = nullptr;
+    QDoubleSpinBox *m_audioDelay = nullptr;
+    QSlider *m_audioDelaySlider = nullptr;
+    QComboBox *m_equalizerPreset = nullptr;
+    std::array<QSlider *, 10> m_equalizerSliders{};
+    QListWidget *m_audioFilters = nullptr;
     bool m_refreshing = false;
 };

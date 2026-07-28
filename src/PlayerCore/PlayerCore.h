@@ -89,6 +89,26 @@ public:
     void setSubtitleBorderSize(double size);
     void setSubtitleAssOverride(const QString &mode);
 
+    void setVideoAspect(const QString &aspect);
+    void setVideoCrop(const QString &crop);
+    void setVideoCropGeometry(
+        int width, int height, int x = -1, int y = -1);
+    void setVideoRotation(int degrees);
+    void setHardwareDecoding(bool enabled);
+    void setDeinterlace(bool enabled);
+    void setVideoFlip(bool enabled);
+    void setVideoMirror(bool enabled);
+    void setVideoColor(const QString &property, int value);
+    void addVideoFilter(const QString &filter);
+    void removeVideoFilter(const QString &label);
+
+    void setAudioDevice(const QString &name);
+    void setAudioChannels(const QString &channels);
+    void setAudioDelay(double seconds);
+    void setAudioEqualizer(const std::array<double, 10> &gains);
+    void addAudioFilter(const QString &filter);
+    void removeAudioFilter(const QString &label);
+
     void shutdown();
 
 signals:
@@ -109,6 +129,10 @@ signals:
     void tracksChanged(const MediaTrackState &tracks);
     void subtitleSettingsChanged(
         const SubtitleSettings &settings);
+    void videoQuickSettingsChanged(
+        const VideoQuickSettings &settings);
+    void audioQuickSettingsChanged(
+        const AudioQuickSettings &settings);
     void eofChanged(bool reached);
     void mediaLoaded(const QUrl &url);
     void mediaEnded(const MpvEndFileInfo &info);
@@ -141,6 +165,11 @@ private:
     void synchronizeAbLoop();
     void synchronizeTracks(const QVariant &trackList = {});
     void synchronizeSubtitleSettings();
+    void synchronizeVideoQuickSettings(const QVariant &filters = {});
+    void synchronizeAudioQuickSettings(const QVariant &filters = {});
+    void addManagedFilter(
+        bool video, const QString &label, const QString &filter);
+    void removeManagedFilter(bool video, const QString &label);
     void runExternalTrackCommand(
         const QString &command, const QUrl &url,
         const QString &failureDescription);
@@ -159,6 +188,7 @@ private:
     bool m_isSeeking = false;
     double m_pendingResumePosition = 0.0;
     double m_lastHistorySavePosition = 0.0;
+    quint64 m_nextUserFilterId = 1;
 
     friend class PlayerCoreLifecycleTests;
 };

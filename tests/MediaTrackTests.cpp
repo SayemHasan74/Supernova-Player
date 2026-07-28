@@ -1,4 +1,5 @@
 #include "PlayerCore/MediaTrack.h"
+#include "PlayerCore/QuickSettings.h"
 
 #include <QTest>
 
@@ -9,6 +10,8 @@ private slots:
     void parsesAuthoritativeMpvTrackList();
     void formatsIinaStyleTrackTitles();
     void keepsPrimaryAndSecondarySelectionsIndependent();
+    void parsesAudioOutputDevices();
+    void parsesAndClassifiesMpvFilters();
 };
 
 void MediaTrackTests::parsesAuthoritativeMpvTrackList()
@@ -91,6 +94,53 @@ void MediaTrackTests::keepsPrimaryAndSecondarySelectionsIndependent()
     QVERIFY(state.selectedSubtitle(false));
     QCOMPARE(state.selectedSubtitle(true)->id, 2);
     QCOMPARE(state.selectedSubtitle(false)->id, 4);
+}
+
+void MediaTrackTests::parsesAudioOutputDevices()
+{
+    const QVariantList node{
+        QVariantMap{
+            {QStringLiteral("name"), QStringLiteral("auto")},
+            {QStringLiteral("description"), QStringLiteral("Auto-select")}},
+        QVariantMap{
+            {QStringLiteral("name"), QStringLiteral("wasapi/Speakers")},
+            {QStringLiteral("description"), QStringLiteral("Speakers")}},
+        QVariantMap{
+            {QStringLiteral("description"), QStringLiteral("Invalid")}}};
+
+    const QList<AudioOutputDevice> devices =
+        AudioOutputDevice::fromMpvNode(node);
+
+    QCOMPARE(devices.size(), 2);
+    QCOMPARE(devices[0].name, QStringLiteral("auto"));
+    QCOMPARE(
+        devices[1].displayName(),
+        QStringLiteral("[Speakers] wasapi/Speakers"));
+}
+
+void MediaTrackTests::parsesAndClassifiesMpvFilters()
+{
+    const QVariantList node{
+        QVariantMap{
+            {QStringLiteral("name"), QStringLiteral("crop")},
+            {QStringLiteral("label"), QStringLiteral("supernova_crop")},
+            {QStringLiteral("params"),
+             QVariantMap{
+                 {QStringLiteral("w"), QStringLiteral("1920")},
+                 {QStringLiteral("h"), QStringLiteral("800")}}}},
+        QVariantMap{
+            {QStringLiteral("name"), QStringLiteral("deband")},
+            {QStringLiteral("label"), QStringLiteral("external_filter")}}};
+
+    const QList<MediaFilterInfo> filters =
+        mediaFiltersFromMpvNode(node);
+
+    QCOMPARE(filters.size(), 2);
+    QVERIFY(filters[0].managed);
+    QVERIFY(filters[0].description.startsWith(
+        QStringLiteral("@supernova_crop:crop=")));
+    QVERIFY(filters[0].description.contains(QStringLiteral("w=1920")));
+    QVERIFY(!filters[1].managed);
 }
 
 QTEST_APPLESS_MAIN(MediaTrackTests)

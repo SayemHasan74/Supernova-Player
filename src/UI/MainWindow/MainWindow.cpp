@@ -760,10 +760,6 @@ void MainWindow::setupWindowChrome()
             this, &MainWindow::toggleMediaSettings);
     connect(m_playerChrome, &IinaPlayerChrome::progressModeRequested,
             this, &MainWindow::toggleProgressMode);
-    connect(m_playerChrome, &IinaPlayerChrome::osdRequested,
-            this, &MainWindow::showPlaybackOsd);
-
-    m_playbackOsd = new PlaybackOsd(m_playbackPage);
     m_timelinePreview = new TimelinePreview(m_playbackPage);
     m_bufferingIndicator =
         new BufferingIndicator(m_playbackPage);
@@ -1401,9 +1397,6 @@ void MainWindow::enterProgressMode()
         m_mediaSettingsPanel->hide();
     }
     updateCommandStates();
-    if (m_playbackOsd) {
-        m_playbackOsd->hideNow();
-    }
     if (m_timelinePreview) {
         m_timelinePreview->dismiss();
     }
@@ -1720,13 +1713,6 @@ void MainWindow::positionPlaybackFeedback()
     if (!m_playbackPage || m_progressMode) {
         return;
     }
-    if (m_playbackOsd) {
-        const int x = std::max(
-            12, (m_playbackPage->width() - m_playbackOsd->width()) / 2);
-        const int y = std::max(
-            12, qRound(m_playbackPage->height() * 0.12));
-        m_playbackOsd->move(x, y);
-    }
     if (m_bufferingIndicator) {
         m_bufferingIndicator->move(
             std::max(0, (m_playbackPage->width()
@@ -1756,16 +1742,6 @@ void MainWindow::positionPlaybackFeedback()
     }
 }
 
-void MainWindow::showPlaybackOsd(
-    const QString &title, const QString &detail, double progress)
-{
-    if (!m_playbackOsd || m_progressMode || title.isEmpty()) {
-        return;
-    }
-    positionPlaybackFeedback();
-    m_playbackOsd->showMessage(title, detail, progress);
-}
-
 void MainWindow::beginShutdown()
 {
     // libmpv requires every render context to be freed before its core is
@@ -1777,7 +1753,6 @@ void MainWindow::beginShutdown()
     m_videoSurface = nullptr;
     m_playbackPage = nullptr;
     m_playerChrome = nullptr;
-    m_playbackOsd = nullptr;
     m_timelinePreview = nullptr;
     m_bufferingIndicator = nullptr;
     m_playlistPanel = nullptr;

@@ -3,123 +3,15 @@
 #include "UI/Design/DesignTokens.h"
 
 #include <QFontDatabase>
-#include <QGraphicsOpacityEffect>
 #include <QPainter>
-#include <QPropertyAnimation>
 #include <QTimer>
 
 #include <algorithm>
 #include <cmath>
 
 namespace {
-constexpr int osdWidth = 270;
-constexpr int osdHeight = 70;
 constexpr int previewPaddingX = 10;
 constexpr int previewHeight = 28;
-}
-
-PlaybackOsd::PlaybackOsd(QWidget *parent)
-    : QWidget(parent)
-{
-    setObjectName(QStringLiteral("playbackOsd"));
-    setAttribute(Qt::WA_TransparentForMouseEvents);
-    setAttribute(Qt::WA_TranslucentBackground);
-    setFixedSize(osdWidth, osdHeight);
-
-    m_opacity = new QGraphicsOpacityEffect(this);
-    m_opacity->setOpacity(0.0);
-    setGraphicsEffect(m_opacity);
-    m_animation =
-        new QPropertyAnimation(m_opacity, "opacity", this);
-    m_animation->setDuration(200);
-    m_animation->setEasingCurve(QEasingCurve::InOutCubic);
-    connect(m_animation, &QPropertyAnimation::finished,
-            this, [this] {
-                if (m_opacity->opacity() <= 0.001) {
-                    hide();
-                }
-            });
-
-    m_hideTimer = new QTimer(this);
-    m_hideTimer->setSingleShot(true);
-    m_hideTimer->setInterval(1400);
-    connect(m_hideTimer, &QTimer::timeout,
-            this, &PlaybackOsd::beginFadeOut);
-    hide();
-}
-
-void PlaybackOsd::showMessage(
-    const QString &title, const QString &detail, double progress)
-{
-    m_title = title;
-    m_detail = detail;
-    m_progress = progress < 0.0
-        ? -1.0
-        : std::clamp(progress, 0.0, 1.0);
-    update();
-    show();
-    raise();
-    m_animation->stop();
-    m_opacity->setOpacity(1.0);
-    m_hideTimer->start();
-}
-
-void PlaybackOsd::hideNow()
-{
-    m_hideTimer->stop();
-    m_animation->stop();
-    m_opacity->setOpacity(0.0);
-    hide();
-}
-
-void PlaybackOsd::beginFadeOut()
-{
-    m_animation->stop();
-    m_animation->setStartValue(m_opacity->opacity());
-    m_animation->setEndValue(0.0);
-    m_animation->start();
-}
-
-void PlaybackOsd::paintEvent(QPaintEvent *event)
-{
-    Q_UNUSED(event)
-    using namespace Supernova::Ui;
-    QPainter painter(this);
-    painter.setRenderHint(QPainter::Antialiasing);
-    painter.setPen(QPen(panelBorder, 1.0));
-    painter.setBrush(panelFill);
-    painter.drawRoundedRect(
-        QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 10, 10);
-
-    QFont titleFont = font();
-    titleFont.setPixelSize(14);
-    titleFont.setWeight(QFont::DemiBold);
-    painter.setFont(titleFont);
-    painter.setPen(primaryText);
-    painter.drawText(
-        QRect(14, 10, width() - 28, 20),
-        Qt::AlignLeft | Qt::AlignVCenter, m_title);
-
-    QFont detailFont = font();
-    detailFont.setPixelSize(11);
-    painter.setFont(detailFont);
-    painter.setPen(secondaryText);
-    if (!m_detail.isEmpty()) {
-        painter.drawText(
-            QRect(14, 31, width() - 28, 16),
-            Qt::AlignLeft | Qt::AlignVCenter, m_detail);
-    }
-
-    if (m_progress >= 0.0) {
-        const QRectF track(14, height() - 13, width() - 28, 3);
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(sliderRemaining);
-        painter.drawRoundedRect(track, 1.5, 1.5);
-        QRectF filled = track;
-        filled.setWidth(track.width() * m_progress);
-        painter.setBrush(sliderPlayed);
-        painter.drawRoundedRect(filled, 1.5, 1.5);
-    }
 }
 
 TimelinePreview::TimelinePreview(QWidget *parent)

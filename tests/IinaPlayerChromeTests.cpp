@@ -15,7 +15,6 @@ private slots:
     void usesIinaFloatingGeometry();
     void exposesStableControlTopology();
     void timelineMapsPointerToMediaPercent();
-    void timelineSeekDoesNotCreateOsdMessage();
     void middleClickPassesThroughChromeControls();
     void openFileButtonRequestsFileDialog();
     void playlistButtonRequestsSidebar();
@@ -118,21 +117,6 @@ void IinaPlayerChromeTests::playlistButtonRequestsSidebar()
     QTest::mouseClick(playlistButton, Qt::LeftButton);
 
     QCOMPARE(spy.count(), 1);
-}
-
-void IinaPlayerChromeTests::timelineSeekDoesNotCreateOsdMessage()
-{
-    PlayerCore playerCore;
-    IinaPlayerChrome chrome(&playerCore);
-    auto *timeline = chrome.findChild<IinaTimeline *>(
-        QStringLiteral("playbackTimeline"));
-    QVERIFY(timeline);
-    QSignalSpy osdSpy(&chrome, &IinaPlayerChrome::osdRequested);
-
-    emit timeline->seekStarted();
-    emit timeline->seekFinished(50.0);
-
-    QCOMPARE(osdSpy.count(), 0);
 }
 
 QTEST_MAIN(IinaPlayerChromeTests)

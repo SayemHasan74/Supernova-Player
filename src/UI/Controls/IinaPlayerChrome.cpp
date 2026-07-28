@@ -587,31 +587,17 @@ IinaPlayerChrome::IinaPlayerChrome(
             this, [this] {
                 if (m_playerCore->info().state == PlayerState::Paused) {
                     m_playerCore->resume();
-                    emit osdRequested(
-                        tr("Play"), formatTime(m_position),
-                        m_duration > 0.0 ? m_position / m_duration : -1.0);
                 } else if (isLoaded(m_playerCore->info().state)) {
                     m_playerCore->pause();
-                    emit osdRequested(
-                        tr("Pause"), formatTime(m_position),
-                        m_duration > 0.0 ? m_position / m_duration : -1.0);
                 }
             });
     connect(m_muteButton, &QAbstractButton::clicked,
             this, [this] {
                 m_playerCore->toggleMute();
-                emit osdRequested(
-                    m_muted ? tr("Sound On") : tr("Muted"),
-                    m_muted ? tr("Volume %1%").arg(qRound(m_volume))
-                            : QString(),
-                    m_muted ? m_volume / 100.0 : 0.0);
             });
     connect(m_volumeSlider, &QSlider::valueChanged,
             m_playerCore, [this](int value) {
                 m_playerCore->setVolume(value);
-                emit osdRequested(
-                    tr("Volume %1%").arg(value), QString(),
-                    static_cast<double>(value) / 100.0);
                 emit activity();
             });
     connect(m_fullScreenButton, &QAbstractButton::clicked,

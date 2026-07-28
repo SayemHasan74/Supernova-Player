@@ -11,6 +11,7 @@
 #include <QFileInfo>
 #include <QStringList>
 #include <QSettings>
+#include <QRegularExpression>
 #include <utility>
 
 namespace {
@@ -971,6 +972,262 @@ void PlayerCore::setSubtitleAssOverride(const QString &mode)
     }
 }
 
+void PlayerCore::setVideoAspect(const QString &aspect)
+{
+    if (!isLoaded(m_info.state)) {
+        return;
+    }
+    const QString value = aspect.trimmed();
+    static const QRegularExpression valid(
+        QStringLiteral(R"(^\d+(?:\.\d+)?(?::\d+(?:\.\d+)?)?$)"));
+    if (value.compare(QStringLiteral("Default"), Qt::CaseInsensitive) == 0
+        || value.isEmpty()) {
+        m_mpv->setString(
+            QStringLiteral("video-aspect-override"),
+            QStringLiteral("-1"));
+    } else if (valid.match(value).hasMatch()) {
+        m_mpv->setString(
+            QStringLiteral("video-aspect-override"), value);
+    }
+}
+
+void PlayerCore::removeManagedFilter(
+    bool video, const QString &label)
+{
+    if (!isLoaded(m_info.state) || label.isEmpty()) {
+        return;
+    }
+    m_mpv->command(
+        {video ? QStringLiteral("vf") : QStringLiteral("af"),
+         QStringLiteral("remove"),
+         QStringLiteral("@%1").arg(label)});
+}
+
+void PlayerCore::addManagedFilter(
+    bool video, const QString &label, const QString &filter)
+{
+    if (!isLoaded(m_info.state)
+        || label.isEmpty() || filter.trimmed().isEmpty()) {
+        return;
+    }
+    removeManagedFilter(video, label);
+    if (video
+        && m_mpv->getString(QStringLiteral("hwdec"))
+               == QStringLiteral("auto")) {
+        // IINA requires software filters to use copy-back decoding. Use its
+        // stable Auto (Copy) path so the filter cannot silently fail.
+        m_mpv->setString(
+            QStringLiteral("hwdec"), QStringLiteral("auto-copy"));
+    }
+    m_mpv->command(
+        {video ? QStringLiteral("vf") : QStringLiteral("af"),
+         QStringLiteral("add"),
+         QStringLiteral("@%1:%2").arg(label, filter.trimmed())});
+}
+
+void PlayerCore::setVideoCrop(const QString &crop)
+{
+    if (!isLoaded(m_info.state)) {
+        return;
+    }
+    removeManagedFilter(true, QStringLiteral("supernova_crop"));
+    if (crop.compare(QStringLiteral("None"), Qt::CaseInsensitive) == 0
+        || crop.isEmpty()) {
+        return;
+    }
+    const QStringList parts = crop.split(QLatin1Char(':'));
+    if (parts.size() != 2) {
+        return;
+    }
+    bool widthOk = false;
+    bool heightOk = false;
+    const double ratioWidth = parts[0].toDouble(&widthOk);
+    const double ratioHeight = parts[1].toDouble(&heightOk);
+    if (!widthOk || !heightOk || ratioWidth <= 0.0
+        || ratioHeight <= 0.0 || m_info.videoWidth <= 0
+        || m_info.videoHeight <= 0) {
+        return;
+    }
+    const double target = ratioWidth / ratioHeight;
+    const double source =
+        static_cast<double>(m_info.videoWidth) / m_info.videoHeight;
+    int width = m_info.videoWidth;
+    int height = m_info.videoHeight;
+    if (source > target) {
+        width = qRound(height * target);
+    } else {
+        height = qRound(width / target);
+    }
+    width = std::max(2, width - width % 2);
+    height = std::max(2, height - height % 2);
+    addManagedFilter(
+        true, QStringLiteral("supernova_crop"),
+        QStringLiteral("crop=w=%1:h=%2").arg(width).arg(height));
+}
+
+void PlayerCore::setVideoCropGeometry(
+    int width, int height, int x, int y)
+{
+    if (!isLoaded(m_info.state) || width <= 0 || height <= 0) {
+        return;
+    }
+    width = std::max(2, width - width % 2);
+    height = std::max(2, height - height % 2);
+    QString filter =
+        QStringLiteral("crop=w=%1:h=%2").arg(width).arg(height);
+    if (x >= 0) {
+        filter += QStringLiteral(":x=%1").arg(x);
+    }
+    if (y >= 0) {
+        filter += QStringLiteral(":y=%1").arg(y);
+    }
+    addManagedFilter(
+        true, QStringLiteral("supernova_crop"), filter);
+}
+
+void PlayerCore::setVideoRotation(int degrees)
+{
+    if (isLoaded(m_info.state)
+        && (degrees == 0 || degrees == 90
+            || degrees == 180 || degrees == 270)) {
+        m_mpv->setInt(QStringLiteral("video-rotate"), degrees);
+    }
+}
+
+void PlayerCore::setHardwareDecoding(bool enabled)
+{
+    if (isLoaded(m_info.state)) {
+        m_mpv->setString(
+            QStringLiteral("hwdec"),
+            enabled ? QStringLiteral("auto")
+                    : QStringLiteral("no"));
+    }
+}
+
+void PlayerCore::setDeinterlace(bool enabled)
+{
+    if (isLoaded(m_info.state)) {
+        m_mpv->setFlag(QStringLiteral("deinterlace"), enabled);
+    }
+}
+
+void PlayerCore::setVideoFlip(bool enabled)
+{
+    if (enabled) {
+        addManagedFilter(
+            true, QStringLiteral("supernova_flip"),
+            QStringLiteral("vflip"));
+    } else {
+        removeManagedFilter(true, QStringLiteral("supernova_flip"));
+    }
+}
+
+void PlayerCore::setVideoMirror(bool enabled)
+{
+    if (enabled) {
+        addManagedFilter(
+            true, QStringLiteral("supernova_mirror"),
+            QStringLiteral("hflip"));
+    } else {
+        removeManagedFilter(true, QStringLiteral("supernova_mirror"));
+    }
+}
+
+void PlayerCore::setVideoColor(
+    const QString &property, int value)
+{
+    static const QStringList allowed{
+        QStringLiteral("brightness"), QStringLiteral("contrast"),
+        QStringLiteral("saturation"), QStringLiteral("gamma"),
+        QStringLiteral("hue")};
+    if (isLoaded(m_info.state) && allowed.contains(property)) {
+        m_mpv->setInt(property, std::clamp(value, -100, 100));
+    }
+}
+
+void PlayerCore::addVideoFilter(const QString &filter)
+{
+    addManagedFilter(
+        true,
+        QStringLiteral("supernova_user_vf_%1")
+            .arg(m_nextUserFilterId++),
+        filter);
+}
+
+void PlayerCore::removeVideoFilter(const QString &label)
+{
+    removeManagedFilter(true, label);
+}
+
+void PlayerCore::setAudioDevice(const QString &name)
+{
+    if (!isLoaded(m_info.state) || name.isEmpty()) {
+        return;
+    }
+    QSettings().setValue(QStringLiteral("audio/device"), name);
+    m_mpv->setString(QStringLiteral("audio-device"), name);
+}
+
+void PlayerCore::setAudioChannels(const QString &channels)
+{
+    static const QStringList allowed{
+        QStringLiteral("auto-safe"), QStringLiteral("auto"),
+        QStringLiteral("mono"), QStringLiteral("stereo"),
+        QStringLiteral("2.1"), QStringLiteral("5.1"),
+        QStringLiteral("7.1")};
+    if (isLoaded(m_info.state) && allowed.contains(channels)) {
+        m_mpv->setString(QStringLiteral("audio-channels"), channels);
+    }
+}
+
+void PlayerCore::setAudioDelay(double seconds)
+{
+    if (isLoaded(m_info.state)) {
+        m_mpv->setDouble(
+            QStringLiteral("audio-delay"),
+            std::clamp(seconds, -3600.0, 3600.0));
+    }
+}
+
+void PlayerCore::setAudioEqualizer(
+    const std::array<double, 10> &gains)
+{
+    static constexpr std::array<int, 10> frequencies{
+        32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000};
+    QStringList filters;
+    for (std::size_t index = 0; index < frequencies.size(); ++index) {
+        const int frequency = frequencies[index];
+        filters.append(
+            QStringLiteral("equalizer=f=%1:t=h:width=%2:g=%3")
+                .arg(frequency)
+                .arg(
+                    static_cast<double>(frequency) / 1.224744871,
+                    0, 'f', 6)
+                .arg(std::clamp(gains[index], -12.0, 12.0),
+                     0, 'f', 2));
+    }
+    m_info.audioSettings.equalizer = gains;
+    addManagedFilter(
+        false, QStringLiteral("supernova_audio_eq"),
+        QStringLiteral("lavfi=[%1]").arg(
+            filters.join(QLatin1Char(','))));
+    emit audioQuickSettingsChanged(m_info.audioSettings);
+}
+
+void PlayerCore::addAudioFilter(const QString &filter)
+{
+    addManagedFilter(
+        false,
+        QStringLiteral("supernova_user_af_%1")
+            .arg(m_nextUserFilterId++),
+        filter);
+}
+
+void PlayerCore::removeAudioFilter(const QString &label)
+{
+    removeManagedFilter(false, label);
+}
+
 void PlayerCore::shutdown()
 {
     if (!canAccessMpv()) {
@@ -1061,6 +1318,35 @@ void PlayerCore::onMpvPropertyChanged(
         m_info.isMuted = value.toBool();
     } else if (name == QStringLiteral("speed")) {
         m_info.playSpeed = value.toDouble();
+    } else if (
+        name == QStringLiteral("video-aspect-override")
+        || name == QStringLiteral("video-rotate")
+        || name == QStringLiteral("deinterlace")
+        || name == QStringLiteral("hwdec")
+        || name == QStringLiteral("brightness")
+        || name == QStringLiteral("contrast")
+        || name == QStringLiteral("saturation")
+        || name == QStringLiteral("gamma")
+        || name == QStringLiteral("hue")) {
+        if (isLoaded(m_info.state)) {
+            synchronizeVideoQuickSettings();
+        }
+    } else if (name == QStringLiteral("vf")) {
+        if (isLoaded(m_info.state)) {
+            synchronizeVideoQuickSettings(value);
+        }
+    } else if (
+        name == QStringLiteral("audio-device-list")
+        || name == QStringLiteral("audio-device")
+        || name == QStringLiteral("audio-channels")
+        || name == QStringLiteral("audio-delay")) {
+        if (isLoaded(m_info.state)) {
+            synchronizeAudioQuickSettings();
+        }
+    } else if (name == QStringLiteral("af")) {
+        if (isLoaded(m_info.state)) {
+            synchronizeAudioQuickSettings(value);
+        }
     } else if (name == QStringLiteral("track-list")) {
         if (isLoaded(m_info.state)) {
             synchronizeTracks(value);
@@ -1225,6 +1511,8 @@ void PlayerCore::onMpvFileLoaded()
     synchronizeAbLoop();
     synchronizeTracks();
     synchronizeSubtitleSettings();
+    synchronizeVideoQuickSettings();
+    synchronizeAudioQuickSettings();
     if (m_info.videoPositionSec < 1.0
         && m_pendingResumePosition > 0.0
         && m_pendingResumePosition
@@ -1626,6 +1914,118 @@ void PlayerCore::synchronizeSubtitleSettings()
     emit subtitleSettingsChanged(m_info.subtitles);
 }
 
+void PlayerCore::synchronizeVideoQuickSettings(
+    const QVariant &filters)
+{
+    VideoQuickSettings updated;
+    const QString aspect =
+        m_mpv->getString(QStringLiteral("video-aspect-override"));
+    updated.aspectRatio =
+        aspect.isEmpty() || aspect == QStringLiteral("-1")
+        || aspect == QStringLiteral("no")
+            ? QStringLiteral("Default") : aspect;
+    updated.rotation = static_cast<int>(
+        m_mpv->getInt(QStringLiteral("video-rotate")));
+    const QString hwdec =
+        m_mpv->getString(QStringLiteral("hwdec"));
+    updated.hardwareDecoding =
+        !hwdec.isEmpty() && hwdec != QStringLiteral("no");
+    updated.deinterlace =
+        m_mpv->getFlag(QStringLiteral("deinterlace"));
+    updated.brightness = static_cast<int>(
+        m_mpv->getInt(QStringLiteral("brightness")));
+    updated.contrast = static_cast<int>(
+        m_mpv->getInt(QStringLiteral("contrast")));
+    updated.saturation = static_cast<int>(
+        m_mpv->getInt(QStringLiteral("saturation")));
+    updated.gamma = static_cast<int>(
+        m_mpv->getInt(QStringLiteral("gamma")));
+    updated.hue = static_cast<int>(
+        m_mpv->getInt(QStringLiteral("hue")));
+
+    const QVariant filterNode =
+        filters.isValid()
+            ? filters : m_mpv->getNode(QStringLiteral("vf"));
+    updated.filters = mediaFiltersFromMpvNode(filterNode);
+    updated.flipped = std::any_of(
+        updated.filters.cbegin(), updated.filters.cend(),
+        [](const MediaFilterInfo &filter) {
+            return filter.label == QStringLiteral("supernova_flip");
+        });
+    updated.mirrored = std::any_of(
+        updated.filters.cbegin(), updated.filters.cend(),
+        [](const MediaFilterInfo &filter) {
+            return filter.label == QStringLiteral("supernova_mirror");
+        });
+    updated.crop = QStringLiteral("None");
+    for (const QVariant &entry : filterNode.toList()) {
+        const QVariantMap map = entry.toMap();
+        if (map.value(QStringLiteral("label")).toString()
+            != QStringLiteral("supernova_crop")) {
+            continue;
+        }
+        const QVariantMap params =
+            map.value(QStringLiteral("params")).toMap();
+        const int width =
+            params.value(QStringLiteral("w")).toInt();
+        const int height =
+            params.value(QStringLiteral("h")).toInt();
+        if (width > 0 && height > 0) {
+            const double ratio =
+                static_cast<double>(width) / height;
+            const QList<QPair<QString, double>> presets{
+                {QStringLiteral("4:3"), 4.0 / 3.0},
+                {QStringLiteral("16:9"), 16.0 / 9.0},
+                {QStringLiteral("16:10"), 16.0 / 10.0},
+                {QStringLiteral("21:9"), 21.0 / 9.0},
+                {QStringLiteral("5:4"), 5.0 / 4.0}};
+            updated.crop = QStringLiteral("Custom");
+            for (const auto &[name, preset] : presets) {
+                if (std::abs(ratio - preset) < 0.02) {
+                    updated.crop = name;
+                    break;
+                }
+            }
+        }
+        break;
+    }
+    if (updated == m_info.videoSettings) {
+        return;
+    }
+    m_info.videoSettings = std::move(updated);
+    emit videoQuickSettingsChanged(m_info.videoSettings);
+}
+
+void PlayerCore::synchronizeAudioQuickSettings(
+    const QVariant &filters)
+{
+    AudioQuickSettings updated;
+    updated.equalizer = m_info.audioSettings.equalizer;
+    updated.devices = AudioOutputDevice::fromMpvNode(
+        m_mpv->getNode(QStringLiteral("audio-device-list")));
+    updated.selectedDevice =
+        m_mpv->getString(QStringLiteral("audio-device"));
+    if (updated.selectedDevice.isEmpty()) {
+        updated.selectedDevice = QStringLiteral("auto");
+    }
+    updated.channels =
+        m_mpv->getString(QStringLiteral("audio-channels"));
+    if (updated.channels.isEmpty()) {
+        updated.channels = QStringLiteral("auto-safe");
+    }
+    updated.delay =
+        m_mpv->getDouble(QStringLiteral("audio-delay"));
+    const QVariant filterNode =
+        filters.isValid()
+            ? filters : m_mpv->getNode(QStringLiteral("af"));
+    updated.filters = mediaFiltersFromMpvNode(filterNode);
+    if (updated == m_info.audioSettings) {
+        return;
+    }
+    m_info.audioSettings = std::move(updated);
+    emit audioQuickSettingsChanged(m_info.audioSettings);
+}
+
 void PlayerCore::savePlaybackPosition(bool reachedEnd)
 {
     if (!isLoaded(m_info.state)
@@ -1705,6 +2105,17 @@ void PlayerCore::resetTransientPlaybackInfo()
         m_info.tracks = {};
         emit tracksChanged(m_info.tracks);
     }
+    if (!(m_info.videoSettings == VideoQuickSettings{})) {
+        m_info.videoSettings = {};
+        emit videoQuickSettingsChanged(m_info.videoSettings);
+    }
+    const QList<AudioOutputDevice> devices =
+        m_info.audioSettings.devices;
+    if (!(m_info.audioSettings == AudioQuickSettings{})) {
+        m_info.audioSettings = {};
+        m_info.audioSettings.devices = devices;
+        emit audioQuickSettingsChanged(m_info.audioSettings);
+    }
     emit videoSizeChanged(0, 0);
     emit positionChanged(0.0);
     emit durationChanged(0.0);
@@ -1748,6 +2159,8 @@ void PlayerCore::resynchronizeFromMpv()
         m_mpv->getFlag(QStringLiteral("eof-reached")));
     synchronizeTracks();
     synchronizeSubtitleSettings();
+    synchronizeVideoQuickSettings();
+    synchronizeAudioQuickSettings();
 
     BufferingInfo buffering = m_info.buffering;
     buffering.active =

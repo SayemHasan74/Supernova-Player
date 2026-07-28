@@ -5,34 +5,7 @@
 #include <QPoint>
 #include <QWidget>
 
-class QGraphicsOpacityEffect;
-class QPropertyAnimation;
 class QTimer;
-
-class PlaybackOsd final : public QWidget {
-    Q_OBJECT
-
-public:
-    explicit PlaybackOsd(QWidget *parent = nullptr);
-
-    void showMessage(
-        const QString &title, const QString &detail,
-        double progress = -1.0);
-    void hideNow();
-
-protected:
-    void paintEvent(QPaintEvent *event) override;
-
-private:
-    void beginFadeOut();
-
-    QString m_title;
-    QString m_detail;
-    double m_progress = -1.0;
-    QGraphicsOpacityEffect *m_opacity = nullptr;
-    QPropertyAnimation *m_animation = nullptr;
-    QTimer *m_hideTimer = nullptr;
-};
 
 class TimelinePreview final : public QWidget {
     Q_OBJECT

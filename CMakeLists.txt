@@ -39,6 +39,8 @@ qt_add_executable(Supernova WIN32
     src/PlayerCore/PlaybackInfo.h
     src/PlayerCore/MediaTrack.h
     src/PlayerCore/MediaTrack.cpp
+    src/PlayerCore/QuickSettings.h
+    src/PlayerCore/QuickSettings.cpp
     src/PlayerCore/NavigationState.h
     src/PlayerCore/PlaybackHistory.h
     src/PlayerCore/PlaybackHistory.cpp
@@ -184,6 +186,8 @@ if(BUILD_TESTING)
         src/PlayerCore/PlaybackInfo.h
         src/PlayerCore/MediaTrack.h
         src/PlayerCore/MediaTrack.cpp
+        src/PlayerCore/QuickSettings.h
+        src/PlayerCore/QuickSettings.cpp
         src/PlayerCore/NavigationState.h
         src/PlayerCore/PlaybackHistory.h
         src/PlayerCore/PlaybackHistory.cpp
@@ -217,6 +221,8 @@ if(BUILD_TESTING)
         tests/MediaTrackTests.cpp
         src/PlayerCore/MediaTrack.h
         src/PlayerCore/MediaTrack.cpp
+        src/PlayerCore/QuickSettings.h
+        src/PlayerCore/QuickSettings.cpp
     )
     target_include_directories(SupernovaMediaTrackTests PRIVATE src)
     target_link_libraries(
@@ -238,6 +244,8 @@ if(BUILD_TESTING)
         src/PlayerCore/PlaybackInfo.h
         src/PlayerCore/MediaTrack.h
         src/PlayerCore/MediaTrack.cpp
+        src/PlayerCore/QuickSettings.h
+        src/PlayerCore/QuickSettings.cpp
         src/PlayerCore/NavigationState.h
         src/PlayerCore/PlaybackHistory.h
         src/PlayerCore/PlaybackHistory.cpp
