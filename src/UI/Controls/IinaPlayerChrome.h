@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PlayerCore/BufferingInfo.h"
+#include "PlayerCore/NavigationState.h"
 
 #include <QAbstractButton>
 #include <QPoint>
@@ -52,6 +53,8 @@ public:
     void setPlayback(double position, double duration);
     void setBuffering(const BufferingInfo &buffering, bool networkResource);
     void setSeeking(bool seeking);
+    void setChapters(const QList<PlaybackChapter> &chapters);
+    void setAbLoop(const AbLoopState &state);
 
 signals:
     void seekRequested(double percent);
@@ -81,6 +84,8 @@ private:
     bool m_hovering = false;
     bool m_networkResource = false;
     bool m_seeking = false;
+    QList<PlaybackChapter> m_chapters;
+    AbLoopState m_abLoop;
 };
 
 class IinaPlayerChrome final : public QWidget {

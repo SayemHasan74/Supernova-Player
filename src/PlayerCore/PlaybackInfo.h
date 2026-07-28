@@ -3,6 +3,7 @@
 #include "PlayerCore/BufferingInfo.h"
 #include "PlayerCore/PlayerState.h"
 #include "PlayerCore/PlaylistState.h"
+#include "PlayerCore/NavigationState.h"
 
 #include <QString>
 #include <QUrl>
@@ -29,6 +30,9 @@ struct PlaybackInfo {
     bool hasAudio = false;
     BufferingInfo buffering;
     PlaylistState playlist;
+    QList<PlaybackChapter> chapters;
+    int currentChapter = -1;
+    AbLoopState abLoop;
 
     bool justOpenedFile = false;
 };

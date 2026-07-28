@@ -2,6 +2,7 @@
 
 #include "Mpv/MpvEvent.h"
 #include "PlayerCore/PlaybackInfo.h"
+#include "PlayerCore/PlaybackHistory.h"
 
 #include <QList>
 #include <QObject>
@@ -44,6 +45,20 @@ public:
     void shufflePlaylist();
     void sortPlaylist(PlaylistSortOrder order);
     void cyclePlaylistLoopMode();
+    void playChapter(int index);
+    void navigateChapter(bool nextChapter);
+    void toggleAbLoop();
+    void removeHistoryEntries(const QStringList &keys);
+    void clearHistory();
+
+    [[nodiscard]] const QList<PlaybackHistoryEntry> &history() const noexcept
+    {
+        return m_history.entries();
+    }
+    [[nodiscard]] QString historyFilePath() const
+    {
+        return m_history.filePath();
+    }
 
     void seekPercent(double percent, bool forceExact = false);
     void seekRelative(double seconds, bool exact = false);
@@ -66,6 +81,12 @@ signals:
     void seekingChanged(bool seeking);
     void bufferingChanged(const BufferingInfo &buffering);
     void playlistChanged(const PlaylistState &playlist);
+    void historyChanged(
+        const QList<PlaybackHistoryEntry> &history);
+    void chaptersChanged(
+        const QList<PlaybackChapter> &chapters);
+    void chapterChanged(int index);
+    void abLoopChanged(const AbLoopState &state);
     void eofChanged(bool reached);
     void mediaLoaded(const QUrl &url);
     void mediaEnded(const MpvEndFileInfo &info);
@@ -94,6 +115,9 @@ private:
     void finishLoadingWhenReady();
     void setBufferingInfo(const BufferingInfo &buffering);
     void synchronizePlaylist(const QVariant &nativePlaylist = {});
+    void synchronizeChapters();
+    void synchronizeAbLoop();
+    void savePlaybackPosition(bool reachedEnd = false);
     void setEofReached(bool reached);
     void resetTransientPlaybackInfo();
     void resynchronizeFromMpv();
@@ -101,10 +125,13 @@ private:
     void setState(PlayerState newState);
 
     std::unique_ptr<MpvCore> m_mpv;
+    PlaybackHistoryStore m_history;
     PlaybackInfo m_info;
     QList<QUrl> m_pendingUrls;
     QString m_pendingPlaybackError;
     bool m_isSeeking = false;
+    double m_pendingResumePosition = 0.0;
+    double m_lastHistorySavePosition = 0.0;
 
     friend class PlayerCoreLifecycleTests;
 };

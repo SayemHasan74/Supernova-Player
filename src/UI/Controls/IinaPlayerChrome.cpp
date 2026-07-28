@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace {
 using namespace Supernova::Ui;
@@ -244,6 +245,19 @@ void IinaTimeline::setSeeking(bool seeking)
     update();
 }
 
+void IinaTimeline::setChapters(
+    const QList<PlaybackChapter> &chapters)
+{
+    m_chapters = chapters;
+    update();
+}
+
+void IinaTimeline::setAbLoop(const AbLoopState &state)
+{
+    m_abLoop = state;
+    update();
+}
+
 void IinaTimeline::leaveEvent(QEvent *event)
 {
     m_hovering = false;
@@ -328,6 +342,42 @@ void IinaTimeline::paintEvent(QPaintEvent *event)
     played.setWidth(track.width() * ratio);
     painter.setBrush(sliderPlayed);
     painter.drawRoundedRect(played, 1.5, 1.5);
+
+    if (m_duration > 0.0) {
+        painter.setPen(QPen(QColor(255, 255, 255, 145), 1.0));
+        for (const PlaybackChapter &chapter : std::as_const(m_chapters)) {
+            const double chapterRatio = std::clamp(
+                chapter.startTimeSec / m_duration, 0.0, 1.0);
+            const qreal x =
+                track.left() + track.width() * chapterRatio;
+            painter.drawLine(
+                QPointF(x, track.top() - 2.0),
+                QPointF(x, track.bottom() + 2.0));
+        }
+        auto drawAbMarker = [&painter, &track, this](
+                                bool visible, double seconds,
+                                const QColor &color) {
+            if (!visible) {
+                return;
+            }
+            const qreal x = track.left() + track.width()
+                * std::clamp(seconds / m_duration, 0.0, 1.0);
+            QPainterPath marker;
+            marker.moveTo(x, track.top() - 5.0);
+            marker.lineTo(x - 3.5, track.top() - 9.0);
+            marker.lineTo(x + 3.5, track.top() - 9.0);
+            marker.closeSubpath();
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(color);
+            painter.drawPath(marker);
+        };
+        drawAbMarker(
+            m_abLoop.status != AbLoopStatus::Cleared,
+            m_abLoop.pointA, QColor(75, 170, 255));
+        drawAbMarker(
+            m_abLoop.status == AbLoopStatus::BSet,
+            m_abLoop.pointB, QColor(255, 152, 71));
+    }
 
     const qreal knobX = track.left() + track.width() * ratio;
     painter.setBrush(sliderKnob);
@@ -611,6 +661,10 @@ IinaPlayerChrome::IinaPlayerChrome(
             });
     connect(m_playerCore, &PlayerCore::seekingChanged,
             m_timeline, &IinaTimeline::setSeeking);
+    connect(m_playerCore, &PlayerCore::chaptersChanged,
+            m_timeline, &IinaTimeline::setChapters);
+    connect(m_playerCore, &PlayerCore::abLoopChanged,
+            m_timeline, &IinaTimeline::setAbLoop);
     connect(m_playerCore->mpvCore(), &MpvCore::propertyChanged,
             this, [this](const QString &name, const QVariant &value) {
                 if (name == QStringLiteral("mute")) {
@@ -634,6 +688,8 @@ IinaPlayerChrome::IinaPlayerChrome(
         m_playerCore->info().buffering,
         m_playerCore->info().isNetworkResource);
     m_timeline->setSeeking(m_playerCore->info().isSeeking);
+    m_timeline->setChapters(m_playerCore->info().chapters);
+    m_timeline->setAbLoop(m_playerCore->info().abLoop);
     updateTimeLabels();
     updateVolumeControls(m_volume, m_muted);
     updatePlaybackState();

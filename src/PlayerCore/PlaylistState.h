@@ -26,6 +26,9 @@ struct PlaylistItem {
     bool current = false;
     bool playing = false;
     bool networkResource = false;
+    double historyPositionSec = 0.0;
+    double historyDurationSec = 0.0;
+    bool completed = false;
 
     friend bool operator==(
         const PlaylistItem &, const PlaylistItem &) = default;

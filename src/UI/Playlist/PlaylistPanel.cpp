@@ -216,6 +216,15 @@ PlaylistPanel::PlaylistPanel(QWidget *parent)
     titleFont.setWeight(QFont::DemiBold);
     title->setFont(titleFont);
     header->addWidget(title);
+    auto *playlistTab = toolButton(
+        QStringLiteral("☷"), tr("Playlist"), this);
+    auto *chaptersTab = toolButton(
+        QStringLiteral("≡"), tr("Chapters"), this);
+    auto *historyTab = toolButton(
+        QStringLiteral("◷"), tr("History"), this);
+    header->addWidget(playlistTab);
+    header->addWidget(chaptersTab);
+    header->addWidget(historyTab);
     header->addStretch();
     auto *closeButton = toolButton(
         QStringLiteral("×"), tr("Close Playlist"), this);
@@ -245,7 +254,21 @@ PlaylistPanel::PlaylistPanel(QWidget *parent)
     };
     layout->addWidget(m_list, 1);
 
-    auto *footer = new QHBoxLayout;
+    m_chapterList = new QListWidget(this);
+    m_chapterList->setContextMenuPolicy(Qt::CustomContextMenu);
+    m_chapterList->hide();
+    layout->addWidget(m_chapterList, 1);
+
+    m_historyList = new QListWidget(this);
+    m_historyList->setSelectionMode(
+        QAbstractItemView::ExtendedSelection);
+    m_historyList->setContextMenuPolicy(Qt::CustomContextMenu);
+    m_historyList->hide();
+    layout->addWidget(m_historyList, 1);
+
+    m_playlistFooter = new QWidget(this);
+    auto *footer = new QHBoxLayout(m_playlistFooter);
+    footer->setContentsMargins(0, 0, 0, 0);
     footer->setSpacing(3);
     m_loopButton = toolButton(
         QStringLiteral("↻"), tr("Cycle Loop Mode"), this);
@@ -271,7 +294,22 @@ PlaylistPanel::PlaylistPanel(QWidget *parent)
     footer->addWidget(addButton);
     footer->addWidget(removeButton);
     footer->addWidget(moreButton);
-    layout->addLayout(footer);
+    layout->addWidget(m_playlistFooter);
+
+    const auto showPage = [this, title](
+                              int page, const QString &pageTitle) {
+        title->setText(pageTitle);
+        m_list->setVisible(page == 0);
+        m_playlistFooter->setVisible(page == 0);
+        m_chapterList->setVisible(page == 1);
+        m_historyList->setVisible(page == 2);
+    };
+    connect(playlistTab, &QPushButton::clicked, this,
+            [showPage] { showPage(0, QObject::tr("Playlist")); });
+    connect(chaptersTab, &QPushButton::clicked, this,
+            [showPage] { showPage(1, QObject::tr("Chapters")); });
+    connect(historyTab, &QPushButton::clicked, this,
+            [showPage] { showPage(2, QObject::tr("History")); });
 
     connect(closeButton, &QPushButton::clicked,
             this, &PlaylistPanel::closeRequested);
@@ -321,6 +359,52 @@ PlaylistPanel::PlaylistPanel(QWidget *parent)
             });
     connect(m_list, &QWidget::customContextMenuRequested,
             this, &PlaylistPanel::showContextMenu);
+    connect(m_chapterList, &QListWidget::itemDoubleClicked,
+            this, [this](QListWidgetItem *item) {
+                emit chapterRequested(
+                    item->data(Qt::UserRole).toInt());
+            });
+    connect(m_historyList, &QListWidget::itemDoubleClicked,
+            this, [this](QListWidgetItem *item) {
+                emit historyRequested(
+                    item->data(Qt::UserRole + 1).toUrl());
+            });
+    connect(m_historyList, &QWidget::customContextMenuRequested,
+            this, [this](const QPoint &position) {
+                if (QListWidgetItem *clicked =
+                        m_historyList->itemAt(position);
+                    clicked && !clicked->isSelected()) {
+                    m_historyList->clearSelection();
+                    clicked->setSelected(true);
+                }
+                QMenu menu(this);
+                QAction *play = menu.addAction(tr("Play"));
+                play->setEnabled(m_historyList->currentItem());
+                QAction *remove =
+                    menu.addAction(tr("Remove from History"));
+                remove->setEnabled(
+                    !m_historyList->selectedItems().isEmpty());
+                menu.addSeparator();
+                QAction *clear = menu.addAction(tr("Clear History"));
+                clear->setEnabled(!m_history.isEmpty());
+                QAction *chosen = menu.exec(
+                    m_historyList->viewport()->mapToGlobal(position));
+                if (chosen == play && m_historyList->currentItem()) {
+                    emit historyRequested(
+                        m_historyList->currentItem()
+                            ->data(Qt::UserRole + 1).toUrl());
+                } else if (chosen == remove) {
+                    QStringList keys;
+                    for (QListWidgetItem *item :
+                         m_historyList->selectedItems()) {
+                        keys.append(
+                            item->data(Qt::UserRole).toString());
+                    }
+                    emit removeHistoryRequested(keys);
+                } else if (chosen == clear) {
+                    emit clearHistoryRequested();
+                }
+            });
     hide();
 }
 
@@ -337,9 +421,12 @@ void PlaylistPanel::setPlaylist(const PlaylistState &playlist)
         item->setData(Qt::UserRole, entry.id);
         item->setToolTip(entry.url.toDisplayString());
         auto *row = new PlaylistRow(m_list);
-        const auto progress =
-            m_progressById.value(entry.id, {0.0, 0.0});
-        row->setEntry(entry, progress.first, progress.second);
+        const double position = entry.current
+            ? m_currentPosition : entry.historyPositionSec;
+        const double duration = entry.current
+            ? std::max(m_currentDuration, entry.historyDurationSec)
+            : entry.historyDurationSec;
+        row->setEntry(entry, position, duration);
         m_list->setItemWidget(item, row);
         item->setSelected(selectedIds.contains(entry.id));
     }
@@ -360,6 +447,56 @@ void PlaylistPanel::setPlaylist(const PlaylistState &playlist)
         setPlaybackDuration(m_currentDuration);
         setPlaybackPosition(m_currentPosition);
     }
+}
+
+void PlaylistPanel::setHistory(
+    const QList<PlaybackHistoryEntry> &history)
+{
+    m_history = history;
+    m_historyList->clear();
+    for (const PlaybackHistoryEntry &entry : history) {
+        auto *item = new QListWidgetItem(m_historyList);
+        item->setData(Qt::UserRole, entry.key);
+        item->setData(Qt::UserRole + 1, entry.url);
+        const QString name = !entry.title.isEmpty()
+            ? entry.title : entry.displayName;
+        const QString progress = entry.durationSec > 0.0
+            ? tr("%1 of %2")
+                  .arg(formatTime(entry.positionSec),
+                       formatTime(entry.durationSec))
+            : QString();
+        item->setText(progress.isEmpty()
+            ? name : QStringLiteral("%1\n%2").arg(name, progress));
+        item->setToolTip(entry.url.toDisplayString());
+        item->setSizeHint(QSize(item->sizeHint().width(), 45));
+    }
+}
+
+void PlaylistPanel::setChapters(
+    const QList<PlaybackChapter> &chapters, int currentChapter)
+{
+    m_chapters = chapters;
+    m_currentChapter = currentChapter;
+    m_chapterList->clear();
+    for (const PlaybackChapter &chapter : chapters) {
+        auto *item = new QListWidgetItem(
+            QStringLiteral("%1  %2")
+                .arg(formatTime(chapter.startTimeSec), chapter.title),
+            m_chapterList);
+        item->setData(Qt::UserRole, chapter.index);
+        if (chapter.index == currentChapter) {
+            item->setText(QStringLiteral("▶  %1").arg(item->text()));
+            QFont font = item->font();
+            font.setWeight(QFont::DemiBold);
+            item->setFont(font);
+            m_chapterList->setCurrentItem(item);
+        }
+    }
+}
+
+void PlaylistPanel::setCurrentChapter(int index)
+{
+    setChapters(m_chapters, index);
 }
 
 void PlaylistPanel::setPlaybackPosition(double seconds)

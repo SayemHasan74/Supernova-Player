@@ -37,6 +37,9 @@ qt_add_executable(Supernova WIN32
     src/PlayerCore/PlayerState.h
     src/PlayerCore/BufferingInfo.h
     src/PlayerCore/PlaybackInfo.h
+    src/PlayerCore/NavigationState.h
+    src/PlayerCore/PlaybackHistory.h
+    src/PlayerCore/PlaybackHistory.cpp
     src/PlayerCore/PlaylistState.h
     src/PlayerCore/PlaylistIO.h
     src/PlayerCore/PlaylistIO.cpp
@@ -173,6 +176,10 @@ if(BUILD_TESTING)
         src/Mpv/MpvEvent.h
         src/PlayerCore/BufferingInfo.h
         src/PlayerCore/PlaybackInfo.h
+        src/PlayerCore/NavigationState.h
+        src/PlayerCore/PlaybackHistory.h
+        src/PlayerCore/PlaybackHistory.cpp
+        src/PlayerCore/PlaylistState.h
         src/PlayerCore/PlayerCore.h
         src/PlayerCore/PlayerCore.cpp
         src/PlayerCore/PlayerState.h
@@ -209,6 +216,10 @@ if(BUILD_TESTING)
         src/Mpv/MpvEvent.h
         src/PlayerCore/BufferingInfo.h
         src/PlayerCore/PlaybackInfo.h
+        src/PlayerCore/NavigationState.h
+        src/PlayerCore/PlaybackHistory.h
+        src/PlayerCore/PlaybackHistory.cpp
+        src/PlayerCore/PlaylistState.h
         src/PlayerCore/PlayerCore.h
         src/PlayerCore/PlayerCore.cpp
         src/PlayerCore/PlayerState.h
@@ -257,10 +268,30 @@ if(BUILD_TESTING)
         NAME PlayerCommand
         COMMAND SupernovaPlayerCommandTests)
 
+    qt_add_executable(SupernovaPlaybackHistoryTests
+        tests/PlaybackHistoryTests.cpp
+        src/Core/Logger.h
+        src/Core/Logger.cpp
+        src/PlayerCore/PlaybackHistory.h
+        src/PlayerCore/PlaybackHistory.cpp
+    )
+    target_include_directories(
+        SupernovaPlaybackHistoryTests PRIVATE src)
+    target_link_libraries(
+        SupernovaPlaybackHistoryTests PRIVATE
+        Qt6::Core
+        Qt6::Test)
+    set_target_properties(
+        SupernovaPlaybackHistoryTests PROPERTIES
+        WIN32_EXECUTABLE FALSE)
+    add_test(
+        NAME PlaybackHistory
+        COMMAND SupernovaPlaybackHistoryTests)
+
     if(WIN32)
         set_tests_properties(
             MediaSourceResolver MpvCore PlayerCoreLifecycle
-            IinaPlayerChrome PlayerCommand PROPERTIES
+            IinaPlayerChrome PlayerCommand PlaybackHistory PROPERTIES
             ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
     endif()

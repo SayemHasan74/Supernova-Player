@@ -178,6 +178,9 @@ void PlayerCore::openUrl(const QUrl &url)
 
 void PlayerCore::openPrimaryUrl(const QUrl &url)
 {
+    savePlaybackPosition();
+    m_pendingResumePosition =
+        m_history.entryFor(url).resumePosition();
     m_info.currentUrl = url;
     emit currentUrlChanged(url);
     m_info.isNetworkResource = !url.isLocalFile();
@@ -274,6 +277,7 @@ void PlayerCore::stop()
         return;
     }
 
+    savePlaybackPosition();
     if (isActive(m_info.state)
         && !m_mpv->getFlag(QStringLiteral("pause"))) {
         m_mpv->setFlag(QStringLiteral("pause"), true);
@@ -307,6 +311,7 @@ void PlayerCore::navigateInPlaylist(bool nextMedia)
                != PlaylistLoopMode::Playlist) {
         return;
     }
+    savePlaybackPosition();
     // Match the manual-open lifecycle: pause before switching so audio cannot
     // run ahead of a slow video decoder, then resume only when the replacement
     // has loaded and its video surface is ready.
@@ -445,6 +450,7 @@ void PlayerCore::playPlaylistIndex(int index)
     if (index < 0 || index >= m_info.playlist.size()) {
         return;
     }
+    savePlaybackPosition();
     if (!m_mpv->getFlag(QStringLiteral("pause"))) {
         m_mpv->setFlag(QStringLiteral("pause"), true);
     }
@@ -527,6 +533,64 @@ void PlayerCore::cyclePlaylistLoopMode()
         QStringLiteral("loop-playlist"),
         next == PlaylistLoopMode::Playlist
             ? QStringLiteral("inf") : QStringLiteral("no"));
+}
+
+void PlayerCore::playChapter(int index)
+{
+    if (!isLoaded(m_info.state)
+        || index < 0 || index >= m_info.chapters.size()) {
+        return;
+    }
+    seekAbsolute(m_info.chapters[index].startTimeSec);
+    resume();
+}
+
+void PlayerCore::navigateChapter(bool nextChapter)
+{
+    if (!isLoaded(m_info.state) || m_info.chapters.isEmpty()) {
+        return;
+    }
+    int target = m_info.currentChapter;
+    if (nextChapter) {
+        target = std::min(
+            target + 1, static_cast<int>(m_info.chapters.size()) - 1);
+    } else if (target >= 0
+               && m_info.videoPositionSec
+                      - m_info.chapters[target].startTimeSec > 3.0) {
+        // Match mpv/IINA previous-chapter behavior: restart the current
+        // chapter unless playback is already close to its beginning.
+    } else {
+        target = std::max(0, target - 1);
+    }
+    playChapter(target);
+}
+
+void PlayerCore::toggleAbLoop()
+{
+    if (!isLoaded(m_info.state)) {
+        return;
+    }
+    m_mpv->command(
+        {QStringLiteral("ab-loop")},
+        [this](const MpvCommandResult &) {
+            if (canAccessMpv()) {
+                synchronizeAbLoop();
+            }
+        });
+}
+
+void PlayerCore::removeHistoryEntries(const QStringList &keys)
+{
+    m_history.remove(keys);
+    emit historyChanged(m_history.entries());
+    synchronizePlaylist();
+}
+
+void PlayerCore::clearHistory()
+{
+    m_history.clear();
+    emit historyChanged(m_history.entries());
+    synchronizePlaylist();
 }
 
 void PlayerCore::seekPercent(double percent, bool forceExact)
@@ -617,6 +681,7 @@ void PlayerCore::shutdown()
         return;
     }
 
+    savePlaybackPosition();
     setState(PlayerState::ShuttingDown);
     // MPV_EVENT_SHUTDOWN completes the asynchronous quit handshake.
     m_mpv->shutdown();
@@ -671,6 +736,16 @@ void PlayerCore::onMpvPropertyChanged(
                 m_info.videoDurationSec);
         }
         emit positionChanged(m_info.videoPositionSec);
+        m_history.updateProgress(
+            m_info.currentUrl, m_info.videoPositionSec,
+            m_info.videoDurationSec);
+        if (std::abs(
+                m_info.videoPositionSec
+                - m_lastHistorySavePosition) >= 10.0) {
+            m_lastHistorySavePosition = m_info.videoPositionSec;
+            m_history.save();
+            emit historyChanged(m_history.entries());
+        }
     } else if (name == QStringLiteral("duration")) {
         const double duration = value.toDouble();
         m_info.videoDurationSec =
@@ -680,12 +755,30 @@ void PlayerCore::onMpvPropertyChanged(
             m_info.videoPositionSec = m_info.videoDurationSec;
             emit positionChanged(m_info.videoPositionSec);
         }
+        m_history.updateProgress(
+            m_info.currentUrl, m_info.videoPositionSec,
+            m_info.videoDurationSec);
     } else if (name == QStringLiteral("volume")) {
         m_info.volume = value.toDouble();
     } else if (name == QStringLiteral("mute")) {
         m_info.isMuted = value.toBool();
     } else if (name == QStringLiteral("speed")) {
         m_info.playSpeed = value.toDouble();
+    } else if (name == QStringLiteral("chapter-list")) {
+        if (isLoaded(m_info.state)) {
+            synchronizeChapters();
+        }
+    } else if (name == QStringLiteral("chapter")) {
+        const int chapter = value.toInt();
+        if (m_info.currentChapter != chapter) {
+            m_info.currentChapter = chapter;
+            emit chapterChanged(chapter);
+        }
+    } else if (name == QStringLiteral("ab-loop-a")
+               || name == QStringLiteral("ab-loop-b")) {
+        if (isLoaded(m_info.state)) {
+            synchronizeAbLoop();
+        }
     } else if (name == QStringLiteral("seeking")) {
         const bool seeking = value.toBool();
         if (isLoaded(m_info.state) && m_isSeeking != seeking) {
@@ -764,6 +857,8 @@ void PlayerCore::onMpvFileStarted(const QString &path)
                 : QUrl::fromUserInput(path);
         if (startedUrl.isValid()
             && startedUrl != m_info.currentUrl) {
+            m_pendingResumePosition =
+                m_history.entryFor(startedUrl).resumePosition();
             m_info.currentUrl = startedUrl;
             m_info.isNetworkResource = !startedUrl.isLocalFile();
             emit currentUrlChanged(startedUrl);
@@ -797,12 +892,27 @@ void PlayerCore::onMpvFileLoaded()
         0.0, m_mpv->getDouble(QStringLiteral("duration")));
     m_info.videoPositionSec = std::max(
         0.0, m_mpv->getDouble(QStringLiteral("time-pos")));
+    m_history.recordLoaded(
+        m_info.currentUrl, m_info.videoDurationSec,
+        m_mpv->getString(QStringLiteral("media-title")));
+    synchronizeChapters();
+    synchronizeAbLoop();
+    if (m_info.videoPositionSec < 1.0
+        && m_pendingResumePosition > 0.0
+        && m_pendingResumePosition
+               < m_info.videoDurationSec - 5.0) {
+        seekAbsolute(m_pendingResumePosition);
+        m_info.videoPositionSec = m_pendingResumePosition;
+    }
+    m_pendingResumePosition = 0.0;
+    m_lastHistorySavePosition = m_info.videoPositionSec;
     emit durationChanged(m_info.videoDurationSec);
     emit positionChanged(m_info.videoPositionSec);
     if (m_info.hasVideo) {
         updateVideoSize();
     }
     emit mediaLoaded(m_info.currentUrl);
+    emit historyChanged(m_history.entries());
     if (!m_info.hasVideo) {
         finishLoadingWhenReady();
     }
@@ -827,6 +937,7 @@ void PlayerCore::onMpvFileEnded(const MpvEndFileInfo &info)
     } else if (info.reason == MPV_END_FILE_REASON_EOF) {
         setBufferingInfo({});
         setEofReached(true);
+        savePlaybackPosition(true);
     } else if (info.reason == MPV_END_FILE_REASON_STOP) {
         // loadfile replace ends the previous playlist entry with STOP before
         // starting the replacement. openPrimaryUrl has already moved us to
@@ -1012,11 +1123,23 @@ void PlayerCore::synchronizePlaylist(const QVariant &nativePlaylist)
                 entry.value(QStringLiteral("current")).toBool();
             item.playing =
                 entry.value(QStringLiteral("playing")).toBool();
+            const PlaybackHistoryEntry history =
+                m_history.entryFor(item.url);
+            item.historyPositionSec = history.positionSec;
+            item.historyDurationSec = history.durationSec;
+            item.completed = history.completed;
             if (item.current) {
                 updated.currentIndex = updated.items.size();
             }
             updated.items.append(item);
         }
+    }
+    for (PlaylistItem &item : updated.items) {
+        const PlaybackHistoryEntry history =
+            m_history.entryFor(item.url);
+        item.historyPositionSec = history.positionSec;
+        item.historyDurationSec = history.durationSec;
+        item.completed = history.completed;
     }
 
     const QString loopFile =
@@ -1040,6 +1163,82 @@ void PlayerCore::synchronizePlaylist(const QVariant &nativePlaylist)
     }
     m_info.playlist = std::move(updated);
     emit playlistChanged(m_info.playlist);
+}
+
+void PlayerCore::synchronizeChapters()
+{
+    QList<PlaybackChapter> chapters;
+    const int count = std::max(
+        0, static_cast<int>(
+               m_mpv->getInt(QStringLiteral("chapter-list/count"))));
+    chapters.reserve(count);
+    for (int index = 0; index < count; ++index) {
+        const QString prefix =
+            QStringLiteral("chapter-list/%1/").arg(index);
+        PlaybackChapter chapter;
+        chapter.index = index;
+        chapter.title =
+            m_mpv->getString(prefix + QStringLiteral("title"));
+        if (chapter.title.isEmpty()) {
+            chapter.title = tr("Chapter %1").arg(index + 1);
+        }
+        chapter.startTimeSec =
+            std::max(0.0, m_mpv->getDouble(
+                              prefix + QStringLiteral("time")));
+        chapters.append(chapter);
+    }
+    if (m_info.chapters != chapters) {
+        m_info.chapters = std::move(chapters);
+        emit chaptersChanged(m_info.chapters);
+    }
+    const int current =
+        static_cast<int>(m_mpv->getInt(QStringLiteral("chapter")));
+    if (m_info.currentChapter != current) {
+        m_info.currentChapter = current;
+        emit chapterChanged(current);
+    }
+}
+
+void PlayerCore::synchronizeAbLoop()
+{
+    AbLoopState state;
+    const QString rawA =
+        m_mpv->getString(QStringLiteral("ab-loop-a"));
+    const QString rawB =
+        m_mpv->getString(QStringLiteral("ab-loop-b"));
+    const bool hasA = !rawA.isEmpty()
+        && rawA != QStringLiteral("no");
+    const bool hasB = !rawB.isEmpty()
+        && rawB != QStringLiteral("no");
+    state.pointA = hasA ? std::max(0.0, rawA.toDouble()) : 0.0;
+    state.pointB = hasB ? std::max(0.0, rawB.toDouble()) : 0.0;
+    state.status = !hasA ? AbLoopStatus::Cleared
+        : !hasB ? AbLoopStatus::ASet : AbLoopStatus::BSet;
+    if (m_info.abLoop != state) {
+        m_info.abLoop = state;
+        emit abLoopChanged(state);
+    }
+}
+
+void PlayerCore::savePlaybackPosition(bool reachedEnd)
+{
+    if (!isLoaded(m_info.state)
+        || !m_info.currentUrl.isValid()
+        || m_info.currentUrl.isEmpty()) {
+        return;
+    }
+    m_history.updateProgress(
+        m_info.currentUrl, m_info.videoPositionSec,
+        m_info.videoDurationSec, reachedEnd);
+    m_history.save();
+    emit historyChanged(m_history.entries());
+    if (!reachedEnd) {
+        // IINA explicitly writes mpv's watch-later configuration before
+        // stopping. This preserves mpv-managed per-file state as well as the
+        // durable history metadata above.
+        m_mpv->command(
+            {QStringLiteral("write-watch-later-config")});
+    }
 }
 
 void PlayerCore::setEofReached(bool reached)
@@ -1079,6 +1278,18 @@ void PlayerCore::resetTransientPlaybackInfo()
     m_info.videoHeight = 0;
     m_info.videoPositionSec = 0.0;
     m_info.videoDurationSec = 0.0;
+    if (!m_info.chapters.isEmpty()) {
+        m_info.chapters.clear();
+        emit chaptersChanged(m_info.chapters);
+    }
+    if (m_info.currentChapter != -1) {
+        m_info.currentChapter = -1;
+        emit chapterChanged(-1);
+    }
+    if (m_info.abLoop.status != AbLoopStatus::Cleared) {
+        m_info.abLoop = {};
+        emit abLoopChanged(m_info.abLoop);
+    }
     if (!m_info.playlist.isEmpty()) {
         m_info.playlist = {};
         emit playlistChanged(m_info.playlist);

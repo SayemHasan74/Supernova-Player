@@ -228,6 +228,10 @@ MainWindow::MainWindow(PlayerCore *playerCore, QWidget *parent)
             });
     connect(m_playerCore, &PlayerCore::playbackStopped,
             this, &MainWindow::updateCommandStates);
+    connect(m_playerCore, &PlayerCore::abLoopChanged,
+            this, [this](const AbLoopState &) {
+                updateCommandStates();
+            });
     connect(m_playerCore->mpvCore(), &MpvCore::propertyChanged,
             this, [this](const QString &name, const QVariant &) {
                 if (name == QStringLiteral("mute")
@@ -307,6 +311,10 @@ void MainWindow::togglePlaylist()
     m_playlistPanel->setVisible(!m_playlistPanel->isVisible());
     if (m_playlistPanel->isVisible()) {
         m_playlistPanel->setPlaylist(m_playerCore->info().playlist);
+        m_playlistPanel->setHistory(m_playerCore->history());
+        m_playlistPanel->setChapters(
+            m_playerCore->info().chapters,
+            m_playerCore->info().currentChapter);
         m_playlistPanel->raise();
     }
     positionPlayerChrome();
@@ -730,6 +738,15 @@ void MainWindow::setupWindowChrome()
         });
     connect(m_playerCore, &PlayerCore::playlistChanged,
             m_playlistPanel, &PlaylistPanel::setPlaylist);
+    connect(m_playerCore, &PlayerCore::historyChanged,
+            m_playlistPanel, &PlaylistPanel::setHistory);
+    connect(m_playerCore, &PlayerCore::chaptersChanged,
+            this, [this](const QList<PlaybackChapter> &chapters) {
+                m_playlistPanel->setChapters(
+                    chapters, m_playerCore->info().currentChapter);
+            });
+    connect(m_playerCore, &PlayerCore::chapterChanged,
+            m_playlistPanel, &PlaylistPanel::setCurrentChapter);
     connect(m_playerCore, &PlayerCore::positionChanged,
             m_playlistPanel, &PlaylistPanel::setPlaybackPosition);
     connect(m_playerCore, &PlayerCore::durationChanged,
@@ -762,6 +779,20 @@ void MainWindow::setupWindowChrome()
             m_playerCore, &PlayerCore::shufflePlaylist);
     connect(m_playlistPanel, &PlaylistPanel::sortRequested,
             m_playerCore, &PlayerCore::sortPlaylist);
+    connect(m_playlistPanel, &PlaylistPanel::chapterRequested,
+            m_playerCore, &PlayerCore::playChapter);
+    connect(m_playlistPanel, &PlaylistPanel::historyRequested,
+            m_playerCore, &PlayerCore::openUrl);
+    connect(m_playlistPanel, &PlaylistPanel::removeHistoryRequested,
+            m_playerCore, &PlayerCore::removeHistoryEntries);
+    connect(m_playlistPanel, &PlaylistPanel::clearHistoryRequested,
+            m_playerCore, &PlayerCore::clearHistory);
+
+    m_playlistPanel->setPlaylist(m_playerCore->info().playlist);
+    m_playlistPanel->setHistory(m_playerCore->history());
+    m_playlistPanel->setChapters(
+        m_playerCore->info().chapters,
+        m_playerCore->info().currentChapter);
 
     m_chromeAutoHideTimer = new QTimer(this);
     m_chromeAutoHideTimer->setSingleShot(true);
@@ -920,6 +951,15 @@ void MainWindow::executeCommand(PlayerCommand command)
     case PlayerCommand::NextMedia:
         m_playerCore->navigateInPlaylist(true);
         break;
+    case PlayerCommand::PreviousChapter:
+        m_playerCore->navigateChapter(false);
+        break;
+    case PlayerCommand::NextChapter:
+        m_playerCore->navigateChapter(true);
+        break;
+    case PlayerCommand::ToggleAbLoop:
+        m_playerCore->toggleAbLoop();
+        break;
     case PlayerCommand::SeekBackward:
         m_playerCore->seekRelative(-5.0, true);
         break;
@@ -1002,6 +1042,17 @@ void MainWindow::updateCommandStates()
         mute->setChecked(m_playerCore->info().isMuted);
         mute->setText(
             m_playerCore->info().isMuted ? tr("Unmute") : tr("Mute"));
+    }
+    if (QAction *abLoop =
+            m_commandActions.value(PlayerCommand::ToggleAbLoop)) {
+        const AbLoopStatus status = m_playerCore->info().abLoop.status;
+        abLoop->setChecked(status != AbLoopStatus::Cleared);
+        abLoop->setText(
+            status == AbLoopStatus::Cleared
+                ? tr("Set A–B Loop Start")
+                : status == AbLoopStatus::ASet
+                    ? tr("Set A–B Loop End")
+                    : tr("Clear A–B Loop"));
     }
     if (QAction *fullScreen =
             m_commandActions.value(PlayerCommand::ToggleFullScreen)) {

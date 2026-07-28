@@ -3,10 +3,12 @@
 #include "Core/Logger.h"
 
 #include <QByteArray>
+#include <QDir>
 #include <QMetaObject>
 #include <QMutexLocker>
 #include <QPointer>
 #include <QStringList>
+#include <QStandardPaths>
 #include <QThread>
 
 #include <mpv/client.h>
@@ -352,6 +354,26 @@ MpvCore::MpvCore(QObject *parent)
     }
 
     try {
+        const QString watchLaterDirectory =
+            QDir(QStandardPaths::writableLocation(
+                     QStandardPaths::AppDataLocation))
+                .filePath(QStringLiteral("watch_later"));
+        QDir().mkpath(watchLaterDirectory);
+        const QByteArray encodedWatchLater =
+            QDir::toNativeSeparators(watchLaterDirectory).toUtf8();
+        requireInitializationStep(
+            mpv_set_option_string(
+                m_mpv, "watch-later-directory",
+                encodedWatchLater.constData()),
+            "Setting watch-later-directory failed");
+        requireInitializationStep(
+            mpv_set_option_string(
+                m_mpv, "save-position-on-quit", "yes"),
+            "Setting save-position-on-quit=yes failed");
+        requireInitializationStep(
+            mpv_set_option_string(
+                m_mpv, "resume-playback", "yes"),
+            "Setting resume-playback=yes failed");
         requireInitializationStep(
             mpv_set_option_string(m_mpv, "vo", "libmpv"),
             "Setting vo=libmpv failed");
@@ -372,6 +394,9 @@ MpvCore::MpvCore(QObject *parent)
         observe(QStringLiteral("mute"), MPV_FORMAT_FLAG);
         observe(QStringLiteral("track-list"), MPV_FORMAT_NONE);
         observe(QStringLiteral("chapter"), MPV_FORMAT_INT64);
+        observe(QStringLiteral("chapter-list"), MPV_FORMAT_NODE);
+        observe(QStringLiteral("ab-loop-a"), MPV_FORMAT_DOUBLE);
+        observe(QStringLiteral("ab-loop-b"), MPV_FORMAT_DOUBLE);
         observe(QStringLiteral("speed"), MPV_FORMAT_DOUBLE);
         observe(QStringLiteral("idle-active"), MPV_FORMAT_FLAG);
         observe(QStringLiteral("eof-reached"), MPV_FORMAT_FLAG);
