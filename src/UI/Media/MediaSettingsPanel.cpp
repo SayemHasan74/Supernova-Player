@@ -26,6 +26,7 @@
 #include <QTabBar>
 #include <QTabWidget>
 #include <QVBoxLayout>
+#include <QWheelEvent>
 
 #include <algorithm>
 #include <cmath>
@@ -33,6 +34,39 @@
 namespace {
 constexpr int trackIdRole = Qt::UserRole;
 constexpr int externalRole = Qt::UserRole + 1;
+
+class ScrollSafeComboBox final : public QComboBox {
+public:
+    using QComboBox::QComboBox;
+
+protected:
+    void wheelEvent(QWheelEvent *event) override
+    {
+        event->ignore();
+    }
+};
+
+class ScrollSafeDoubleSpinBox final : public QDoubleSpinBox {
+public:
+    using QDoubleSpinBox::QDoubleSpinBox;
+
+protected:
+    void wheelEvent(QWheelEvent *event) override
+    {
+        event->ignore();
+    }
+};
+
+class ScrollSafeFontComboBox final : public QFontComboBox {
+public:
+    using QFontComboBox::QFontComboBox;
+
+protected:
+    void wheelEvent(QWheelEvent *event) override
+    {
+        event->ignore();
+    }
+};
 
 QLabel *sectionLabel(const QString &text, QWidget *parent)
 {
@@ -221,7 +255,7 @@ QWidget *MediaSettingsPanel::createVideoControls(QWidget *parent)
                             const QString &title, QComboBox *&combo) {
         auto *row = new QHBoxLayout;
         row->addWidget(sectionLabel(title, container));
-        combo = new QComboBox(container);
+        combo = new ScrollSafeComboBox(container);
         row->addWidget(combo, 1);
         layout->addLayout(row);
     };
@@ -386,13 +420,13 @@ QWidget *MediaSettingsPanel::createAudioControls(QWidget *parent)
 
     auto *deviceRow = new QHBoxLayout;
     deviceRow->addWidget(sectionLabel(tr("Output Device"), container));
-    m_audioDevice = new QComboBox(container);
+    m_audioDevice = new ScrollSafeComboBox(container);
     deviceRow->addWidget(m_audioDevice, 1);
     layout->addLayout(deviceRow);
 
     auto *channelRow = new QHBoxLayout;
     channelRow->addWidget(sectionLabel(tr("Channels"), container));
-    m_audioChannels = new QComboBox(container);
+    m_audioChannels = new ScrollSafeComboBox(container);
     const QList<QPair<QString, QString>> channels{
         {tr("Auto Safe"), QStringLiteral("auto-safe")},
         {tr("Auto"), QStringLiteral("auto")},
@@ -412,7 +446,7 @@ QWidget *MediaSettingsPanel::createAudioControls(QWidget *parent)
     m_audioDelaySlider = new QSlider(Qt::Horizontal, container);
     m_audioDelaySlider->setRange(-100, 100);
     delayRow->addWidget(m_audioDelaySlider, 1);
-    m_audioDelay = new QDoubleSpinBox(container);
+    m_audioDelay = new ScrollSafeDoubleSpinBox(container);
     m_audioDelay->setRange(-3600.0, 3600.0);
     m_audioDelay->setDecimals(2);
     m_audioDelay->setSingleStep(0.05);
@@ -422,7 +456,7 @@ QWidget *MediaSettingsPanel::createAudioControls(QWidget *parent)
 
     auto *presetRow = new QHBoxLayout;
     presetRow->addWidget(sectionLabel(tr("Equalizer"), container));
-    m_equalizerPreset = new QComboBox(container);
+    m_equalizerPreset = new ScrollSafeComboBox(container);
     presetRow->addWidget(m_equalizerPreset, 1);
     layout->addLayout(presetRow);
 
@@ -581,10 +615,15 @@ QWidget *MediaSettingsPanel::createAudioControls(QWidget *parent)
 QWidget *MediaSettingsPanel::createSubtitlePage()
 {
     auto *scroll = new QScrollArea(this);
+    scroll->setObjectName(QStringLiteral("mediaSettingsScrollArea"));
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scroll->setAutoFillBackground(false);
+    scroll->viewport()->setAutoFillBackground(false);
     auto *page = new QWidget(scroll);
+    page->setObjectName(QStringLiteral("mediaSettingsScrollPage"));
+    page->setAttribute(Qt::WA_StyledBackground, true);
     auto *layout = new QVBoxLayout(page);
     layout->setContentsMargins(0, 8, 4, 10);
     layout->setSpacing(8);
@@ -645,13 +684,13 @@ QWidget *MediaSettingsPanel::createSubtitlePage()
     connect(reload, &QPushButton::clicked,
             m_playerCore, &PlayerCore::reloadExternalSubtitles);
 
-    m_targetSubtitle = new QComboBox(page);
+    m_targetSubtitle = new ScrollSafeComboBox(page);
     m_targetSubtitle->addItems({tr("Primary"), tr("Secondary")});
     layout->addWidget(m_targetSubtitle);
 
     auto *delayRow = new QHBoxLayout;
     delayRow->addWidget(sectionLabel(tr("Delay"), page));
-    m_delay = new QDoubleSpinBox(page);
+    m_delay = new ScrollSafeDoubleSpinBox(page);
     m_delay->setDecimals(2);
     m_delay->setRange(-3600.0, 3600.0);
     m_delay->setSingleStep(0.05);
@@ -683,9 +722,9 @@ QWidget *MediaSettingsPanel::createSubtitlePage()
 
     auto *fontRow = new QHBoxLayout;
     fontRow->addWidget(new QLabel(tr("Font"), page));
-    m_font = new QFontComboBox(page);
+    m_font = new ScrollSafeFontComboBox(page);
     fontRow->addWidget(m_font, 1);
-    m_fontSize = new QComboBox(page);
+    m_fontSize = new ScrollSafeComboBox(page);
     for (int size = 25; size <= 75; size += 5) {
         m_fontSize->addItem(QString::number(size), size);
     }
@@ -708,7 +747,7 @@ QWidget *MediaSettingsPanel::createSubtitlePage()
     auto *borderRow = new QHBoxLayout;
     borderRow->addWidget(new QLabel(tr("Border"), page));
     borderRow->addStretch();
-    m_borderSize = new QComboBox(page);
+    m_borderSize = new ScrollSafeComboBox(page);
     for (double size : {0.0, 0.25, 0.5, 1.0, 1.5,
                         2.0, 2.5, 3.0, 4.0, 5.0}) {
         m_borderSize->addItem(QString::number(size), size);
@@ -721,7 +760,7 @@ QWidget *MediaSettingsPanel::createSubtitlePage()
 
     auto *assRow = new QHBoxLayout;
     assRow->addWidget(new QLabel(tr("ASS Style Override"), page));
-    m_assOverride = new QComboBox(page);
+    m_assOverride = new ScrollSafeComboBox(page);
     m_assOverride->addItem(tr("Use Embedded Styles"), QStringLiteral("no"));
     m_assOverride->addItem(tr("Override Selectively"), QStringLiteral("yes"));
     m_assOverride->addItem(tr("Scale Embedded Styles"), QStringLiteral("scale"));
