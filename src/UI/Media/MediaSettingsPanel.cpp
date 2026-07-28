@@ -77,6 +77,10 @@ MediaSettingsPanel::MediaSettingsPanel(
         " padding: 9px 13px; border: 0; }"
         "#mediaSettingsPanel QTabBar::tab:selected {"
         " color: white; border-bottom: 2px solid rgb(64,145,255); }"
+        "#mediaSettingsPanel QScrollArea,"
+        "#mediaSettingsPanel QScrollArea QWidget#qt_scrollarea_viewport,"
+        "#mediaSettingsPanel QWidget#mediaSettingsScrollPage {"
+        " background: transparent; border: 0; }"
         "#mediaSettingsPanel QListWidget { background: rgba(255,255,255,8);"
         " border: 1px solid rgba(255,255,255,20); border-radius: 7px;"
         " color: rgb(235,235,240); outline: 0; }"
@@ -150,6 +154,8 @@ QListWidget *MediaSettingsPanel::createTrackList(
 QWidget *MediaSettingsPanel::createTrackPage(MediaTrackType type)
 {
     auto *page = new QWidget(this);
+    page->setObjectName(QStringLiteral("mediaSettingsScrollPage"));
+    page->setAttribute(Qt::WA_StyledBackground, true);
     auto *layout = new QVBoxLayout(page);
     layout->setContentsMargins(0, 8, 0, 0);
     layout->setSpacing(8);
@@ -194,9 +200,12 @@ QWidget *MediaSettingsPanel::createTrackPage(MediaTrackType type)
     connect(load, &QPushButton::clicked, this,
             [this, type] { chooseExternalFile(type); });
     auto *scroll = new QScrollArea(this);
+    scroll->setObjectName(QStringLiteral("mediaSettingsScrollArea"));
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scroll->setAutoFillBackground(false);
+    scroll->viewport()->setAutoFillBackground(false);
     scroll->setWidget(page);
     return scroll;
 }
