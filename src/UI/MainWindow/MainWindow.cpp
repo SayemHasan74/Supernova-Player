@@ -9,6 +9,7 @@
 #include "UI/Controls/PlaybackFeedback.h"
 #include "UI/Commands/PlayerCommand.h"
 #include "UI/Playlist/PlaylistPanel.h"
+#include "UI/Media/MediaSettingsPanel.h"
 #include "UI/Welcome/WelcomeView.h"
 #include "UI/Design/DesignTokens.h"
 
@@ -315,12 +316,34 @@ void MainWindow::togglePlaylist()
     }
     m_playlistPanel->setVisible(!m_playlistPanel->isVisible());
     if (m_playlistPanel->isVisible()) {
+        if (m_mediaSettingsPanel) {
+            m_mediaSettingsPanel->hide();
+        }
         m_playlistPanel->setPlaylist(m_playerCore->info().playlist);
         m_playlistPanel->setHistory(m_playerCore->history());
         m_playlistPanel->setChapters(
             m_playerCore->info().chapters,
             m_playerCore->info().currentChapter);
         m_playlistPanel->raise();
+    }
+    positionPlayerChrome();
+    positionPlaybackFeedback();
+    updateCommandStates();
+}
+
+void MainWindow::toggleMediaSettings()
+{
+    if (!m_mediaSettingsPanel || m_progressMode
+        || !isLoaded(m_playerCore->info().state)) {
+        return;
+    }
+    m_mediaSettingsPanel->setVisible(
+        !m_mediaSettingsPanel->isVisible());
+    if (m_mediaSettingsPanel->isVisible()) {
+        if (m_playlistPanel) {
+            m_playlistPanel->hide();
+        }
+        m_mediaSettingsPanel->raise();
     }
     positionPlayerChrome();
     positionPlaybackFeedback();
@@ -393,6 +416,26 @@ void MainWindow::dragEnterEvent(QDragEnterEvent *event)
 
 void MainWindow::dropEvent(QDropEvent *event)
 {
+    if (isLoaded(m_playerCore->info().state)
+        && event->mimeData()->hasUrls()) {
+        QList<QUrl> subtitles;
+        for (const QUrl &url : event->mimeData()->urls()) {
+            if (url.isLocalFile()
+                && MediaSourceResolver::supportedSubtitleExtensions()
+                       .contains(
+                           QFileInfo(url.toLocalFile()).suffix().toLower())) {
+                subtitles.append(url);
+            }
+        }
+        if (!subtitles.isEmpty()) {
+            for (const QUrl &subtitle : subtitles) {
+                m_playerCore->loadExternalSubtitle(subtitle);
+            }
+            event->setDropAction(Qt::CopyAction);
+            event->accept();
+            return;
+        }
+    }
     const QList<QUrl> urls =
         MediaSourceResolver::fromMimeData(event->mimeData());
     if (urls.isEmpty()) {
@@ -419,8 +462,12 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         watchedWidget && m_playlistPanel
         && (watchedWidget == m_playlistPanel
             || m_playlistPanel->isAncestorOf(watchedWidget));
+    const bool isMediaSettingsUi =
+        watchedWidget && m_mediaSettingsPanel
+        && (watchedWidget == m_mediaSettingsPanel
+            || m_mediaSettingsPanel->isAncestorOf(watchedWidget));
     const bool isPlaybackInteractionUi =
-        (isPlaybackUi && !isPlaylistUi)
+        (isPlaybackUi && !isPlaylistUi && !isMediaSettingsUi)
         || watched == m_progressBar;
     if (isPlaybackInteractionUi
         && event->type() == QEvent::MouseButtonPress) {
@@ -709,6 +756,8 @@ void MainWindow::setupWindowChrome()
             this, &MainWindow::openFiles);
     connect(m_playerChrome, &IinaPlayerChrome::playlistRequested,
             this, &MainWindow::togglePlaylist);
+    connect(m_playerChrome, &IinaPlayerChrome::mediaSettingsRequested,
+            this, &MainWindow::toggleMediaSettings);
     connect(m_playerChrome, &IinaPlayerChrome::progressModeRequested,
             this, &MainWindow::toggleProgressMode);
     connect(m_playerChrome, &IinaPlayerChrome::osdRequested,
@@ -719,6 +768,8 @@ void MainWindow::setupWindowChrome()
     m_bufferingIndicator =
         new BufferingIndicator(m_playbackPage);
     m_playlistPanel = new PlaylistPanel(m_playbackPage);
+    m_mediaSettingsPanel =
+        new MediaSettingsPanel(m_playerCore, m_playbackPage);
     connect(
         m_playerChrome, &IinaPlayerChrome::previewRequested,
         this, [this](double seconds, const QPoint &globalAnchor) {
@@ -758,6 +809,9 @@ void MainWindow::setupWindowChrome()
             m_playlistPanel, &PlaylistPanel::setPlaybackDuration);
     connect(m_playlistPanel, &PlaylistPanel::closeRequested,
             this, &MainWindow::togglePlaylist);
+    connect(
+        m_mediaSettingsPanel, &MediaSettingsPanel::closeRequested,
+        this, &MainWindow::toggleMediaSettings);
     connect(m_playlistPanel, &PlaylistPanel::addRequested,
             this, &MainWindow::addFilesToPlaylist);
     connect(m_playlistPanel, &PlaylistPanel::addUrlRequested,
@@ -917,6 +971,8 @@ void MainWindow::setupMenus()
         m_commandActions.value(PlayerCommand::ToggleMute));
     m_playbackContextMenu->addAction(
         m_commandActions.value(PlayerCommand::TogglePlaylist));
+    m_playbackContextMenu->addAction(
+        m_commandActions.value(PlayerCommand::ToggleMediaSettings));
     m_playbackContextMenu->addAction(m_fullScreenAction);
     m_playbackContextMenu->addSeparator();
     for (PlayerMenu menuType :
@@ -1032,6 +1088,9 @@ void MainWindow::executeCommand(PlayerCommand command)
     case PlayerCommand::TogglePlaylist:
         togglePlaylist();
         break;
+    case PlayerCommand::ToggleMediaSettings:
+        toggleMediaSettings();
+        break;
     case PlayerCommand::PauseAndMinimize:
         pauseAndMinimize();
         break;
@@ -1088,6 +1147,13 @@ void MainWindow::updateCommandStates()
         playlist->setChecked(
             m_playlistPanel && m_playlistPanel->isVisible());
         playlist->setEnabled(!m_progressMode);
+    }
+    if (QAction *settings =
+            m_commandActions.value(PlayerCommand::ToggleMediaSettings)) {
+        settings->setChecked(
+            m_mediaSettingsPanel
+            && m_mediaSettingsPanel->isVisible());
+        settings->setEnabled(loaded && !m_progressMode);
     }
     if (QAction *onTop =
             m_commandActions.value(PlayerCommand::ToggleAlwaysOnTop)) {
@@ -1276,6 +1342,9 @@ void MainWindow::showWelcomeView()
     if (m_playlistPanel) {
         m_playlistPanel->hide();
     }
+    if (m_mediaSettingsPanel) {
+        m_mediaSettingsPanel->hide();
+    }
     m_welcomeView->setHistory(m_playerCore->history());
     m_contentLayout->setCurrentWidget(m_welcomeView);
     if (!isMaximized()) {
@@ -1323,8 +1392,13 @@ void MainWindow::enterProgressMode()
     m_progressMode = true;
     m_playlistWasVisibleBeforeProgress =
         m_playlistPanel && m_playlistPanel->isVisible();
+    m_mediaSettingsWasVisibleBeforeProgress =
+        m_mediaSettingsPanel && m_mediaSettingsPanel->isVisible();
     if (m_playlistPanel) {
         m_playlistPanel->hide();
+    }
+    if (m_mediaSettingsPanel) {
+        m_mediaSettingsPanel->hide();
     }
     updateCommandStates();
     if (m_playbackOsd) {
@@ -1427,7 +1501,12 @@ void MainWindow::exitProgressMode()
     if (m_playlistWasVisibleBeforeProgress && m_playlistPanel) {
         m_playlistPanel->show();
     }
+    if (m_mediaSettingsWasVisibleBeforeProgress
+        && m_mediaSettingsPanel) {
+        m_mediaSettingsPanel->show();
+    }
     m_playlistWasVisibleBeforeProgress = false;
+    m_mediaSettingsWasVisibleBeforeProgress = false;
     showNormal();
 
     if (restoreFullScreen) {
@@ -1631,6 +1710,9 @@ void MainWindow::positionPlayerChrome()
     if (m_playlistPanel && m_playlistPanel->isVisible()) {
         m_playlistPanel->raise();
     }
+    if (m_mediaSettingsPanel && m_mediaSettingsPanel->isVisible()) {
+        m_mediaSettingsPanel->raise();
+    }
 }
 
 void MainWindow::positionPlaybackFeedback()
@@ -1662,6 +1744,16 @@ void MainWindow::positionPlaybackFeedback()
             m_playlistPanel->raise();
         }
     }
+    if (m_mediaSettingsPanel) {
+        const int width = std::clamp(
+            m_playbackPage->width() / 3, 300, 390);
+        m_mediaSettingsPanel->setGeometry(
+            std::max(0, m_playbackPage->width() - width),
+            0, width, m_playbackPage->height());
+        if (m_mediaSettingsPanel->isVisible()) {
+            m_mediaSettingsPanel->raise();
+        }
+    }
 }
 
 void MainWindow::showPlaybackOsd(
@@ -1689,6 +1781,7 @@ void MainWindow::beginShutdown()
     m_timelinePreview = nullptr;
     m_bufferingIndicator = nullptr;
     m_playlistPanel = nullptr;
+    m_mediaSettingsPanel = nullptr;
     m_welcomeView = nullptr;
     m_progressBar = nullptr;
     m_contentLayout = nullptr;

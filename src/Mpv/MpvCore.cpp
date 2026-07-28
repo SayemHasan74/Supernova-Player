@@ -9,6 +9,7 @@
 #include <QPointer>
 #include <QStringList>
 #include <QStandardPaths>
+#include <QSettings>
 #include <QThread>
 
 #include <mpv/client.h>
@@ -383,6 +384,35 @@ MpvCore::MpvCore(QObject *parent)
         requireInitializationStep(
             mpv_set_option_string(m_mpv, "keep-open", "yes"),
             "Setting keep-open=yes failed");
+        const QSettings settings;
+        const auto restoreTextOption =
+            [this, &settings](const char *option, const char *key) {
+                if (!settings.contains(QString::fromLatin1(key))) {
+                    return;
+                }
+                const QByteArray value =
+                    settings.value(QString::fromLatin1(key))
+                        .toString()
+                        .toUtf8();
+                requireInitializationStep(
+                    mpv_set_option_string(m_mpv, option, value.constData()),
+                    option);
+            };
+        restoreTextOption("sub-scale", "subtitles/scale");
+        restoreTextOption("sub-font", "subtitles/font");
+        restoreTextOption("sub-font-size", "subtitles/fontSize");
+        restoreTextOption("sub-color", "subtitles/textColor");
+        restoreTextOption(
+            "sub-back-color", "subtitles/backgroundColor");
+        restoreTextOption(
+            "sub-border-color", "subtitles/borderColor");
+        restoreTextOption(
+            "sub-border-size", "subtitles/borderSize");
+        restoreTextOption(
+            "sub-ass-override", "subtitles/assOverride");
+        restoreTextOption(
+            "secondary-sub-ass-override",
+            "subtitles/assOverride");
         requireInitializationStep(
             mpv_request_log_messages(m_mpv, "warn"),
             "Requesting mpv log messages failed");
@@ -392,7 +422,34 @@ MpvCore::MpvCore(QObject *parent)
         observe(QStringLiteral("duration"), MPV_FORMAT_DOUBLE);
         observe(QStringLiteral("volume"), MPV_FORMAT_DOUBLE);
         observe(QStringLiteral("mute"), MPV_FORMAT_FLAG);
-        observe(QStringLiteral("track-list"), MPV_FORMAT_NONE);
+        observe(QStringLiteral("track-list"), MPV_FORMAT_NODE);
+        observe(QStringLiteral("vid"), MPV_FORMAT_INT64);
+        observe(QStringLiteral("aid"), MPV_FORMAT_INT64);
+        observe(QStringLiteral("sid"), MPV_FORMAT_INT64);
+        observe(QStringLiteral("secondary-sid"), MPV_FORMAT_INT64);
+        observe(QStringLiteral("sub-visibility"), MPV_FORMAT_FLAG);
+        observe(
+            QStringLiteral("secondary-sub-visibility"),
+            MPV_FORMAT_FLAG);
+        observe(QStringLiteral("sub-delay"), MPV_FORMAT_DOUBLE);
+        observe(
+            QStringLiteral("secondary-sub-delay"),
+            MPV_FORMAT_DOUBLE);
+        observe(QStringLiteral("sub-pos"), MPV_FORMAT_INT64);
+        observe(
+            QStringLiteral("secondary-sub-pos"),
+            MPV_FORMAT_INT64);
+        observe(QStringLiteral("sub-scale"), MPV_FORMAT_DOUBLE);
+        observe(QStringLiteral("sub-font"), MPV_FORMAT_STRING);
+        observe(QStringLiteral("sub-font-size"), MPV_FORMAT_DOUBLE);
+        observe(QStringLiteral("sub-color"), MPV_FORMAT_STRING);
+        observe(QStringLiteral("sub-back-color"), MPV_FORMAT_STRING);
+        observe(
+            QStringLiteral("sub-border-color"), MPV_FORMAT_STRING);
+        observe(
+            QStringLiteral("sub-border-size"), MPV_FORMAT_DOUBLE);
+        observe(
+            QStringLiteral("sub-ass-override"), MPV_FORMAT_STRING);
         observe(QStringLiteral("chapter"), MPV_FORMAT_INT64);
         observe(QStringLiteral("chapter-list"), MPV_FORMAT_NODE);
         observe(QStringLiteral("ab-loop-a"), MPV_FORMAT_DOUBLE);
@@ -658,6 +715,23 @@ QString MpvCore::getString(const QString &name) const
         value ? QString::fromUtf8(value) : QString();
     mpv_free(value);
     return converted;
+}
+
+QVariant MpvCore::getNode(const QString &name) const
+{
+    if (!m_mpv || isShuttingDown()) {
+        return {};
+    }
+    mpv_node node{};
+    const QByteArray encodedName = name.toUtf8();
+    if (mpv_get_property(
+            m_mpv, encodedName.constData(), MPV_FORMAT_NODE,
+            &node) < 0) {
+        return {};
+    }
+    const QVariant value = decodeNode(node);
+    mpv_free_node_contents(&node);
+    return value;
 }
 
 void MpvCore::observe(const QString &name, mpv_format format)

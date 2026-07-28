@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 #include <utility>
 
 namespace {
@@ -133,6 +134,25 @@ QPainterPath iconPath(IinaIcon icon, const QRectF &bounds)
             path.lineTo(center.x() + 6.0 * unit, y);
         }
         break;
+    case IinaIcon::Settings: {
+        path.addEllipse(
+            QRectF(center.x() - 5.0, center.y() - 5.0, 10.0, 10.0));
+        QPainterPath hole;
+        hole.addEllipse(
+            QRectF(center.x() - 1.8, center.y() - 1.8, 3.6, 3.6));
+        path = path.subtracted(hole);
+        for (int index = 0; index < 8; ++index) {
+            const double angle =
+                static_cast<double>(index) * std::numbers::pi / 4.0;
+            const QPointF offset(
+                std::cos(angle) * 6.2, std::sin(angle) * 6.2);
+            path.addRoundedRect(
+                QRectF(center.x() + offset.x() - 1.2,
+                       center.y() + offset.y() - 1.2, 2.4, 2.4),
+                0.6, 0.6);
+        }
+        break;
+    }
     case IinaIcon::FullScreen:
     case IinaIcon::ExitFullScreen: {
         const bool inward = icon == IinaIcon::ExitFullScreen;
@@ -529,6 +549,15 @@ IinaPlayerChrome::IinaPlayerChrome(
     m_playlistButton->setToolTip(tr("Show Playlist"));
     controls->addWidget(m_playlistButton);
 
+    m_settingsButton =
+        new IinaIconButton(IinaIcon::Settings, this);
+    m_settingsButton->setObjectName(
+        QStringLiteral("mediaSettingsButton"));
+    m_settingsButton->setFixedSize(
+        compactButtonExtent, compactButtonExtent);
+    m_settingsButton->setToolTip(tr("Quick Settings"));
+    controls->addWidget(m_settingsButton);
+
     m_fullScreenButton =
         new IinaIconButton(IinaIcon::FullScreen, this);
     m_fullScreenButton->setObjectName(QStringLiteral("fullScreenButton"));
@@ -591,6 +620,8 @@ IinaPlayerChrome::IinaPlayerChrome(
             this, &IinaPlayerChrome::openFileRequested);
     connect(m_playlistButton, &QAbstractButton::clicked,
             this, &IinaPlayerChrome::playlistRequested);
+    connect(m_settingsButton, &QAbstractButton::clicked,
+            this, &IinaPlayerChrome::mediaSettingsRequested);
     connect(m_previousButton, &QAbstractButton::clicked,
             m_playerCore, [this] {
                 m_playerCore->navigateInPlaylist(false);

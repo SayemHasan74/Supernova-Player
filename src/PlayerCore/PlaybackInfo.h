@@ -4,6 +4,7 @@
 #include "PlayerCore/PlayerState.h"
 #include "PlayerCore/PlaylistState.h"
 #include "PlayerCore/NavigationState.h"
+#include "PlayerCore/MediaTrack.h"
 
 #include <QString>
 #include <QUrl>
@@ -33,6 +34,8 @@ struct PlaybackInfo {
     QList<PlaybackChapter> chapters;
     int currentChapter = -1;
     AbLoopState abLoop;
+    MediaTrackState tracks;
+    SubtitleSettings subtitles;
 
     bool justOpenedFile = false;
 };

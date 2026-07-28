@@ -34,6 +34,7 @@ enum class PlayerCommand {
     ToggleAlwaysOnTop,
     ToggleProgressMode,
     TogglePlaylist,
+    ToggleMediaSettings,
     PauseAndMinimize,
 };
 

@@ -299,6 +299,11 @@ QStringList MediaSourceResolver::supportedMediaExtensions()
     return kVideoExtensions + kAudioExtensions;
 }
 
+QStringList MediaSourceResolver::supportedSubtitleExtensions()
+{
+    return kSubtitleExtensions;
+}
+
 QStringList MediaSourceResolver::supportedPlaylistExtensions()
 {
     return kPlaylistExtensions;

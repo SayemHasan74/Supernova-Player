@@ -7,7 +7,10 @@
 #include <algorithm>
 #include <cmath>
 #include <QCoreApplication>
+#include <QDir>
 #include <QFileInfo>
+#include <QStringList>
+#include <QSettings>
 #include <utility>
 
 namespace {
@@ -675,6 +678,299 @@ void PlayerCore::setSpeed(double speed)
         QStringLiteral("speed"), std::clamp(speed, 0.01, 100.0));
 }
 
+void PlayerCore::setTrack(MediaTrackType type, int id)
+{
+    if (!isLoaded(m_info.state)) {
+        return;
+    }
+    const QString property =
+        type == MediaTrackType::Video
+            ? QStringLiteral("vid")
+            : type == MediaTrackType::Audio
+                ? QStringLiteral("aid")
+                : QStringLiteral("sid");
+    m_mpv->setInt(property, std::max(0, id));
+}
+
+void PlayerCore::setSubtitleTrack(bool primary, int id)
+{
+    if (!isLoaded(m_info.state)) {
+        return;
+    }
+    m_mpv->setInt(
+        primary ? QStringLiteral("sid")
+                : QStringLiteral("secondary-sid"),
+        std::max(0, id));
+}
+
+void PlayerCore::runExternalTrackCommand(
+    const QString &command, const QUrl &url,
+    const QString &failureDescription)
+{
+    if (!isLoaded(m_info.state) || !url.isLocalFile()) {
+        return;
+    }
+    const QString path = QDir::toNativeSeparators(url.toLocalFile());
+    m_mpv->command(
+        {command, path},
+        [this, failureDescription, path](const MpvCommandResult &result) {
+            if (result.succeeded()) {
+                return;
+            }
+            const QString message =
+                tr("%1\n%2\n%3")
+                    .arg(failureDescription, path, result.errorMessage);
+            Logger::warn(message);
+            emit playbackError(message, true);
+        });
+}
+
+void PlayerCore::loadExternalVideo(const QUrl &url)
+{
+    runExternalTrackCommand(
+        QStringLiteral("video-add"), url,
+        tr("This external video file is unsupported."));
+}
+
+void PlayerCore::loadExternalAudio(const QUrl &url)
+{
+    runExternalTrackCommand(
+        QStringLiteral("audio-add"), url,
+        tr("This external audio file is unsupported."));
+}
+
+void PlayerCore::loadExternalSubtitle(const QUrl &url)
+{
+    if (!isLoaded(m_info.state) || !url.isLocalFile()) {
+        return;
+    }
+    const QString requested =
+        QFileInfo(url.toLocalFile()).canonicalFilePath();
+    const auto existing = std::find_if(
+        m_info.tracks.subtitleTracks.cbegin(),
+        m_info.tracks.subtitleTracks.cend(),
+        [&requested](const MediaTrack &track) {
+            const QString existingPath =
+                QFileInfo(track.externalFilename).canonicalFilePath();
+            return track.isExternal && !requested.isEmpty()
+                && existingPath == requested;
+        });
+    if (existing != m_info.tracks.subtitleTracks.cend()) {
+        m_mpv->command(
+            {QStringLiteral("sub-reload"),
+             QString::number(existing->id)});
+        setSubtitleTrack(true, existing->id);
+        return;
+    }
+    runExternalTrackCommand(
+        QStringLiteral("sub-add"), url,
+        tr("This external subtitle file is unsupported."));
+}
+
+void PlayerCore::removeExternalTrack(MediaTrackType type, int id)
+{
+    if (!isLoaded(m_info.state) || id <= 0) {
+        return;
+    }
+    const QList<MediaTrack> *tracks =
+        type == MediaTrackType::Video
+            ? &m_info.tracks.videoTracks
+            : type == MediaTrackType::Audio
+                ? &m_info.tracks.audioTracks
+                : &m_info.tracks.subtitleTracks;
+    const auto track = std::find_if(
+        tracks->cbegin(), tracks->cend(),
+        [id](const MediaTrack &candidate) {
+            return candidate.id == id;
+        });
+    if (track == tracks->cend() || !track->isExternal) {
+        return;
+    }
+    const QString command =
+        type == MediaTrackType::Video
+            ? QStringLiteral("video-remove")
+            : type == MediaTrackType::Audio
+                ? QStringLiteral("audio-remove")
+                : QStringLiteral("sub-remove");
+    m_mpv->command({command, QString::number(id)});
+}
+
+void PlayerCore::reloadExternalSubtitles()
+{
+    if (!isLoaded(m_info.state)) {
+        return;
+    }
+    const MediaTrack *primary =
+        m_info.tracks.selectedSubtitle(true);
+    const MediaTrack *secondary =
+        m_info.tracks.selectedSubtitle(false);
+    const QString primaryFilename =
+        primary ? primary->externalFilename : QString();
+    const QString secondaryFilename =
+        secondary ? secondary->externalFilename : QString();
+    QList<int> externalIds;
+    for (const MediaTrack &track : m_info.tracks.subtitleTracks) {
+        if (track.isExternal) {
+            externalIds.append(track.id);
+        }
+    }
+    if (externalIds.isEmpty()) {
+        return;
+    }
+    auto remaining =
+        std::make_shared<int>(externalIds.size());
+    for (int id : externalIds) {
+        m_mpv->command(
+            {QStringLiteral("sub-reload"), QString::number(id)},
+            [this, remaining, primaryFilename, secondaryFilename](
+                const MpvCommandResult &) {
+                --*remaining;
+                if (*remaining != 0 || !isLoaded(m_info.state)) {
+                    return;
+                }
+                synchronizeTracks();
+                const auto findId =
+                    [this](const QString &filename) {
+                        if (filename.isEmpty()) {
+                            return 0;
+                        }
+                        const QString canonical =
+                            QFileInfo(filename).canonicalFilePath();
+                        const auto found = std::find_if(
+                            m_info.tracks.subtitleTracks.cbegin(),
+                            m_info.tracks.subtitleTracks.cend(),
+                            [&canonical](const MediaTrack &track) {
+                                return QFileInfo(track.externalFilename)
+                                           .canonicalFilePath()
+                                    == canonical;
+                            });
+                        return found
+                                == m_info.tracks.subtitleTracks.cend()
+                            ? 0 : found->id;
+                    };
+                const int primaryId = findId(primaryFilename);
+                const int secondaryId = findId(secondaryFilename);
+                if (primaryId > 0) {
+                    setSubtitleTrack(true, primaryId);
+                }
+                if (secondaryId > 0) {
+                    setSubtitleTrack(false, secondaryId);
+                }
+            });
+    }
+}
+
+void PlayerCore::setSubtitleVisibility(bool primary, bool visible)
+{
+    if (isLoaded(m_info.state)) {
+        m_mpv->setFlag(
+            primary ? QStringLiteral("sub-visibility")
+                    : QStringLiteral("secondary-sub-visibility"),
+            visible);
+    }
+}
+
+void PlayerCore::setSubtitleDelay(bool primary, double seconds)
+{
+    if (isLoaded(m_info.state)) {
+        m_mpv->setDouble(
+            primary ? QStringLiteral("sub-delay")
+                    : QStringLiteral("secondary-sub-delay"),
+            std::clamp(seconds, -3600.0, 3600.0));
+    }
+}
+
+void PlayerCore::setSubtitlePosition(bool primary, int position)
+{
+    if (isLoaded(m_info.state)) {
+        m_mpv->setInt(
+            primary ? QStringLiteral("sub-pos")
+                    : QStringLiteral("secondary-sub-pos"),
+            std::clamp(position, 0, 150));
+    }
+}
+
+void PlayerCore::setSubtitleScale(double scale)
+{
+    if (isLoaded(m_info.state)) {
+        scale = std::clamp(scale, 0.1, 10.0);
+        QSettings().setValue(QStringLiteral("subtitles/scale"), scale);
+        m_mpv->setDouble(
+            QStringLiteral("sub-scale"), scale);
+    }
+}
+
+void PlayerCore::setSubtitleFont(const QString &font)
+{
+    if (isLoaded(m_info.state) && !font.trimmed().isEmpty()) {
+        const QString value = font.trimmed();
+        QSettings().setValue(QStringLiteral("subtitles/font"), value);
+        m_mpv->setString(QStringLiteral("sub-font"), value);
+    }
+}
+
+void PlayerCore::setSubtitleFontSize(double size)
+{
+    if (isLoaded(m_info.state)) {
+        size = std::clamp(size, 1.0, 200.0);
+        QSettings().setValue(QStringLiteral("subtitles/fontSize"), size);
+        m_mpv->setDouble(
+            QStringLiteral("sub-font-size"), size);
+    }
+}
+
+void PlayerCore::setSubtitleTextColor(const QString &color)
+{
+    if (isLoaded(m_info.state)) {
+        QSettings().setValue(
+            QStringLiteral("subtitles/textColor"), color);
+        m_mpv->setString(QStringLiteral("sub-color"), color);
+    }
+}
+
+void PlayerCore::setSubtitleBackgroundColor(const QString &color)
+{
+    if (isLoaded(m_info.state)) {
+        QSettings().setValue(
+            QStringLiteral("subtitles/backgroundColor"), color);
+        m_mpv->setString(QStringLiteral("sub-back-color"), color);
+    }
+}
+
+void PlayerCore::setSubtitleBorderColor(const QString &color)
+{
+    if (isLoaded(m_info.state)) {
+        QSettings().setValue(
+            QStringLiteral("subtitles/borderColor"), color);
+        m_mpv->setString(QStringLiteral("sub-border-color"), color);
+    }
+}
+
+void PlayerCore::setSubtitleBorderSize(double size)
+{
+    if (isLoaded(m_info.state)) {
+        size = std::clamp(size, 0.0, 20.0);
+        QSettings().setValue(QStringLiteral("subtitles/borderSize"), size);
+        m_mpv->setDouble(
+            QStringLiteral("sub-border-size"), size);
+    }
+}
+
+void PlayerCore::setSubtitleAssOverride(const QString &mode)
+{
+    static const QStringList allowed{
+        QStringLiteral("no"), QStringLiteral("yes"),
+        QStringLiteral("force"), QStringLiteral("scale"),
+        QStringLiteral("strip")};
+    if (isLoaded(m_info.state) && allowed.contains(mode)) {
+        QSettings().setValue(
+            QStringLiteral("subtitles/assOverride"), mode);
+        m_mpv->setString(QStringLiteral("sub-ass-override"), mode);
+        m_mpv->setString(
+            QStringLiteral("secondary-sub-ass-override"), mode);
+    }
+}
+
 void PlayerCore::shutdown()
 {
     if (!canAccessMpv()) {
@@ -765,6 +1061,35 @@ void PlayerCore::onMpvPropertyChanged(
         m_info.isMuted = value.toBool();
     } else if (name == QStringLiteral("speed")) {
         m_info.playSpeed = value.toDouble();
+    } else if (name == QStringLiteral("track-list")) {
+        if (isLoaded(m_info.state)) {
+            synchronizeTracks(value);
+        }
+    } else if (name == QStringLiteral("vid")
+               || name == QStringLiteral("aid")
+               || name == QStringLiteral("sid")
+               || name == QStringLiteral("secondary-sid")) {
+        if (isLoaded(m_info.state)) {
+            synchronizeTracks();
+        }
+    } else if (
+        name == QStringLiteral("sub-visibility")
+        || name == QStringLiteral("secondary-sub-visibility")
+        || name == QStringLiteral("sub-delay")
+        || name == QStringLiteral("secondary-sub-delay")
+        || name == QStringLiteral("sub-pos")
+        || name == QStringLiteral("secondary-sub-pos")
+        || name == QStringLiteral("sub-scale")
+        || name == QStringLiteral("sub-font")
+        || name == QStringLiteral("sub-font-size")
+        || name == QStringLiteral("sub-color")
+        || name == QStringLiteral("sub-back-color")
+        || name == QStringLiteral("sub-border-color")
+        || name == QStringLiteral("sub-border-size")
+        || name == QStringLiteral("sub-ass-override")) {
+        if (isLoaded(m_info.state)) {
+            synchronizeSubtitleSettings();
+        }
     } else if (name == QStringLiteral("chapter-list")) {
         if (isLoaded(m_info.state)) {
             synchronizeChapters();
@@ -898,6 +1223,8 @@ void PlayerCore::onMpvFileLoaded()
         m_mpv->getString(QStringLiteral("media-title")));
     synchronizeChapters();
     synchronizeAbLoop();
+    synchronizeTracks();
+    synchronizeSubtitleSettings();
     if (m_info.videoPositionSec < 1.0
         && m_pendingResumePosition > 0.0
         && m_pendingResumePosition
@@ -1221,6 +1548,84 @@ void PlayerCore::synchronizeAbLoop()
     }
 }
 
+void PlayerCore::synchronizeTracks(const QVariant &trackList)
+{
+    MediaTrackState updated;
+    const QVariant node =
+        trackList.isValid()
+            ? trackList
+            : m_mpv->getNode(QStringLiteral("track-list"));
+    for (MediaTrack track : MediaTrack::fromMpvNode(node)) {
+        switch (track.type) {
+        case MediaTrackType::Video:
+            updated.videoTracks.append(std::move(track));
+            break;
+        case MediaTrackType::Audio:
+            updated.audioTracks.append(std::move(track));
+            break;
+        case MediaTrackType::Subtitle:
+            updated.subtitleTracks.append(std::move(track));
+            break;
+        }
+    }
+    updated.selectedVideoId =
+        static_cast<int>(m_mpv->getInt(QStringLiteral("vid")));
+    updated.selectedAudioId =
+        static_cast<int>(m_mpv->getInt(QStringLiteral("aid")));
+    updated.selectedSubtitleId =
+        static_cast<int>(m_mpv->getInt(QStringLiteral("sid")));
+    updated.selectedSecondarySubtitleId =
+        static_cast<int>(
+            m_mpv->getInt(QStringLiteral("secondary-sid")));
+    if (updated == m_info.tracks) {
+        return;
+    }
+    m_info.tracks = std::move(updated);
+    m_info.hasVideo = m_info.tracks.selectedVideoId > 0;
+    m_info.hasAudio = m_info.tracks.selectedAudioId > 0;
+    emit tracksChanged(m_info.tracks);
+}
+
+void PlayerCore::synchronizeSubtitleSettings()
+{
+    SubtitleSettings updated;
+    updated.primaryVisible =
+        m_mpv->getFlag(QStringLiteral("sub-visibility"));
+    updated.secondaryVisible =
+        m_mpv->getFlag(
+            QStringLiteral("secondary-sub-visibility"));
+    updated.primaryDelay =
+        m_mpv->getDouble(QStringLiteral("sub-delay"));
+    updated.secondaryDelay =
+        m_mpv->getDouble(
+            QStringLiteral("secondary-sub-delay"));
+    updated.primaryPosition =
+        static_cast<int>(m_mpv->getInt(QStringLiteral("sub-pos")));
+    updated.secondaryPosition =
+        static_cast<int>(
+            m_mpv->getInt(QStringLiteral("secondary-sub-pos")));
+    updated.scale = std::clamp(
+        m_mpv->getDouble(QStringLiteral("sub-scale")), 0.1, 10.0);
+    updated.font = m_mpv->getString(QStringLiteral("sub-font"));
+    updated.fontSize =
+        m_mpv->getDouble(QStringLiteral("sub-font-size"));
+    updated.textColor =
+        m_mpv->getString(QStringLiteral("sub-color"));
+    updated.backgroundColor =
+        m_mpv->getString(QStringLiteral("sub-back-color"));
+    updated.borderColor =
+        m_mpv->getString(QStringLiteral("sub-border-color"));
+    updated.borderSize =
+        m_mpv->getDouble(QStringLiteral("sub-border-size"));
+    updated.assOverride =
+        m_mpv->getString(QStringLiteral("sub-ass-override"));
+    if (updated == m_info.subtitles) {
+        return;
+    }
+    m_info.subtitles = std::move(updated);
+    emit subtitleSettingsChanged(m_info.subtitles);
+}
+
 void PlayerCore::savePlaybackPosition(bool reachedEnd)
 {
     if (!isLoaded(m_info.state)
@@ -1296,6 +1701,10 @@ void PlayerCore::resetTransientPlaybackInfo()
         m_info.playlist = {};
         emit playlistChanged(m_info.playlist);
     }
+    if (!(m_info.tracks == MediaTrackState{})) {
+        m_info.tracks = {};
+        emit tracksChanged(m_info.tracks);
+    }
     emit videoSizeChanged(0, 0);
     emit positionChanged(0.0);
     emit durationChanged(0.0);
@@ -1337,6 +1746,8 @@ void PlayerCore::resynchronizeFromMpv()
     m_isSeeking = m_info.isSeeking;
     setEofReached(
         m_mpv->getFlag(QStringLiteral("eof-reached")));
+    synchronizeTracks();
+    synchronizeSubtitleSettings();
 
     BufferingInfo buffering = m_info.buffering;
     buffering.active =

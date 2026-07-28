@@ -49,6 +49,8 @@ void IinaPlayerChromeTests::exposesStableControlTopology()
     QVERIFY(chrome.findChild<IinaIconButton *>(
         QStringLiteral("playlistButton")));
     QVERIFY(chrome.findChild<IinaIconButton *>(
+        QStringLiteral("mediaSettingsButton")));
+    QVERIFY(chrome.findChild<IinaIconButton *>(
         QStringLiteral("fullScreenButton")));
     QVERIFY(chrome.findChild<QSlider *>(
         QStringLiteral("volumeSlider")));

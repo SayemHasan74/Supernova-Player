@@ -70,6 +70,25 @@ public:
     void toggleMute();
     void setSpeed(double speed);
 
+    void setTrack(MediaTrackType type, int id);
+    void setSubtitleTrack(bool primary, int id);
+    void loadExternalVideo(const QUrl &url);
+    void loadExternalAudio(const QUrl &url);
+    void loadExternalSubtitle(const QUrl &url);
+    void removeExternalTrack(MediaTrackType type, int id);
+    void reloadExternalSubtitles();
+    void setSubtitleVisibility(bool primary, bool visible);
+    void setSubtitleDelay(bool primary, double seconds);
+    void setSubtitlePosition(bool primary, int position);
+    void setSubtitleScale(double scale);
+    void setSubtitleFont(const QString &font);
+    void setSubtitleFontSize(double size);
+    void setSubtitleTextColor(const QString &color);
+    void setSubtitleBackgroundColor(const QString &color);
+    void setSubtitleBorderColor(const QString &color);
+    void setSubtitleBorderSize(double size);
+    void setSubtitleAssOverride(const QString &mode);
+
     void shutdown();
 
 signals:
@@ -87,6 +106,9 @@ signals:
         const QList<PlaybackChapter> &chapters);
     void chapterChanged(int index);
     void abLoopChanged(const AbLoopState &state);
+    void tracksChanged(const MediaTrackState &tracks);
+    void subtitleSettingsChanged(
+        const SubtitleSettings &settings);
     void eofChanged(bool reached);
     void mediaLoaded(const QUrl &url);
     void mediaEnded(const MpvEndFileInfo &info);
@@ -117,6 +139,11 @@ private:
     void synchronizePlaylist(const QVariant &nativePlaylist = {});
     void synchronizeChapters();
     void synchronizeAbLoop();
+    void synchronizeTracks(const QVariant &trackList = {});
+    void synchronizeSubtitleSettings();
+    void runExternalTrackCommand(
+        const QString &command, const QUrl &url,
+        const QString &failureDescription);
     void savePlaybackPosition(bool reachedEnd = false);
     void setEofReached(bool reached);
     void resetTransientPlaybackInfo();

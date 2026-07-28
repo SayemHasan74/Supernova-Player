@@ -76,6 +76,8 @@ const QList<PlayerCommandDefinition> &playerCommandDefinitions()
         {PlayerCommand::TogglePlaylist, PlayerMenu::Window,
          QStringLiteral("Playlist"),
          {QStringLiteral("Ctrl+Shift+P")}, false, true},
+        {PlayerCommand::ToggleMediaSettings, PlayerMenu::Window,
+         QStringLiteral("Quick Settings"), {}, true, true},
         {PlayerCommand::PauseAndMinimize, PlayerMenu::Window,
          QStringLiteral("Pause and Minimize"),
          {QStringLiteral("Escape")}},

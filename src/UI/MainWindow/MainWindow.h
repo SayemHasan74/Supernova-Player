@@ -24,6 +24,7 @@ class MpvVideoSurface;
 class PlayerCore;
 class ProgressOnlyBar;
 class PlaylistPanel;
+class MediaSettingsPanel;
 class WelcomeView;
 class QMenu;
 class QPoint;
@@ -44,6 +45,7 @@ public slots:
     void toggleProgressMode();
     void pauseAndMinimize();
     void togglePlaylist();
+    void toggleMediaSettings();
 
 signals:
     void renderContextReady();
@@ -110,6 +112,7 @@ private:
     TimelinePreview *m_timelinePreview = nullptr;
     BufferingIndicator *m_bufferingIndicator = nullptr;
     PlaylistPanel *m_playlistPanel = nullptr;
+    MediaSettingsPanel *m_mediaSettingsPanel = nullptr;
     WelcomeView *m_welcomeView = nullptr;
     ProgressOnlyBar *m_progressBar = nullptr;
     QStackedLayout *m_contentLayout = nullptr;
@@ -133,5 +136,6 @@ private:
     bool m_resumeAfterWheelSeek = false;
     bool m_ignoreNextLeftRelease = false;
     bool m_playlistWasVisibleBeforeProgress = false;
+    bool m_mediaSettingsWasVisibleBeforeProgress = false;
     bool m_applicationEventFilterInstalled = false;
 };

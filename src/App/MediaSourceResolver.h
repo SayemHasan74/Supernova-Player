@@ -22,6 +22,7 @@ public:
 
     [[nodiscard]] static QString mediaDialogFilter();
     [[nodiscard]] static QStringList supportedMediaExtensions();
+    [[nodiscard]] static QStringList supportedSubtitleExtensions();
     [[nodiscard]] static QStringList supportedPlaylistExtensions();
 
 private:

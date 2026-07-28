@@ -51,6 +51,7 @@ public:
     [[nodiscard]] double getDouble(const QString &name) const;
     [[nodiscard]] bool getFlag(const QString &name) const;
     [[nodiscard]] QString getString(const QString &name) const;
+    [[nodiscard]] QVariant getNode(const QString &name) const;
 
     void observe(const QString &name, mpv_format format);
     quint64 addHook(
