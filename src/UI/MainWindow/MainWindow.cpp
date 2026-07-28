@@ -15,6 +15,7 @@
 #include <QApplication>
 #include <QCloseEvent>
 #include <QContextMenuEvent>
+#include <QCursor>
 #include <QDir>
 #include <QDragEnterEvent>
 #include <QDropEvent>
@@ -165,6 +166,11 @@ MainWindow::MainWindow(PlayerCore *playerCore, QWidget *parent)
     }
     setupWindowChrome();
     setupMenus();
+    // Keep one responder chain for every layer of the player window. This is
+    // the Qt equivalent of IINA routing rendering-view input back through its
+    // player-window controller, and it remains intact in fullscreen.
+    qApp->installEventFilter(this);
+    m_applicationEventFilterInstalled = true;
     m_progressBar->setPlayback(
         m_playerCore->info().videoPositionSec,
         m_playerCore->info().videoDurationSec);
@@ -234,6 +240,10 @@ MainWindow::MainWindow(PlayerCore *playerCore, QWidget *parent)
 
 MainWindow::~MainWindow()
 {
+    if (m_applicationEventFilterInstalled && qApp) {
+        qApp->removeEventFilter(this);
+        m_applicationEventFilterInstalled = false;
+    }
     if (QWidget *surface = takeCentralWidget()) {
         delete surface;
     }
@@ -396,9 +406,10 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         watchedWidget && m_playlistPanel
         && (watchedWidget == m_playlistPanel
             || m_playlistPanel->isAncestorOf(watchedWidget));
-    const bool isPlayerSurface =
-        watched == m_videoSurface || watched == m_progressBar;
-    if (isPlayerSurface
+    const bool isPlaybackInteractionUi =
+        (isPlaybackUi && !isPlaylistUi)
+        || watched == m_progressBar;
+    if (isPlaybackInteractionUi
         && event->type() == QEvent::MouseButtonPress) {
         auto *mouseEvent = static_cast<QMouseEvent *>(event);
         if (mouseEvent->button() == Qt::MiddleButton) {
@@ -425,6 +436,16 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
                     qRound(mouseEvent->position().x()))
                     * 100.0,
                 true);
+            mouseEvent->accept();
+            return true;
+        }
+    }
+    if (isPlaybackUi && !isPlaylistUi
+        && event->type() == QEvent::MouseButtonRelease) {
+        auto *mouseEvent = static_cast<QMouseEvent *>(event);
+        if (mouseEvent->button() == Qt::RightButton) {
+            showPlaybackContextMenu(
+                mouseEvent->globalPosition().toPoint());
             mouseEvent->accept();
             return true;
         }
@@ -457,8 +478,9 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
     if (isPlaybackUi && !isPlaylistUi
         && event->type() == QEvent::ContextMenu) {
         auto *contextEvent = static_cast<QContextMenuEvent *>(event);
-        updateCommandStates();
-        m_playbackContextMenu->popup(contextEvent->globalPos());
+        if (!m_playbackContextMenu->isVisible()) {
+            showPlaybackContextMenu(contextEvent->globalPos());
+        }
         contextEvent->accept();
         return true;
     }
@@ -563,7 +585,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         gesture->accept();
         return true;
     }
-    if (watched == m_videoSurface
+    if (isPlaybackUi && !isPlaylistUi
         && (event->type() == QEvent::MouseMove
             || event->type() == QEvent::Enter)) {
         revealPlayerChrome();
@@ -659,7 +681,6 @@ void MainWindow::setupWindowChrome()
     m_videoSurface->setAcceptDrops(false);
     m_videoSurface->setFocusPolicy(Qt::StrongFocus);
     m_videoSurface->setMouseTracking(true);
-    m_videoSurface->installEventFilter(this);
     playbackLayout->addWidget(m_videoSurface);
     connect(m_videoSurface, &MpvVideoSurface::renderContextReady,
             this, &MainWindow::renderContextReady);
@@ -742,23 +763,6 @@ void MainWindow::setupWindowChrome()
     connect(m_playlistPanel, &PlaylistPanel::sortRequested,
             m_playerCore, &PlayerCore::sortPlaylist);
 
-    // Route input from every playback overlay through the same window-level
-    // handler. In fullscreen the floating chrome can be the mouse target
-    // instead of the video widget; IINA likewise handles right mouse at the
-    // player-window level so behavior does not depend on the current mode.
-    m_playbackPage->installEventFilter(this);
-    const auto playbackWidgets =
-        m_playbackPage->findChildren<QWidget *>();
-    for (QWidget *widget : playbackWidgets) {
-        const bool belongsToPlaylist =
-            widget == m_playlistPanel
-            || (m_playlistPanel
-                && m_playlistPanel->isAncestorOf(widget));
-        if (!belongsToPlaylist) {
-            widget->installEventFilter(this);
-        }
-    }
-
     m_chromeAutoHideTimer = new QTimer(this);
     m_chromeAutoHideTimer->setSingleShot(true);
     m_chromeAutoHideTimer->setInterval(
@@ -788,7 +792,6 @@ void MainWindow::setupWindowChrome()
     });
 
     m_progressBar = new ProgressOnlyBar(contentRoot);
-    m_progressBar->installEventFilter(this);
     m_contentLayout->addWidget(m_playbackPage);
     m_contentLayout->addWidget(m_progressBar);
     m_contentLayout->setCurrentWidget(m_playbackPage);
@@ -850,7 +853,9 @@ void MainWindow::setupMenus()
     m_fullScreenAction =
         m_commandActions.value(PlayerCommand::ToggleFullScreen);
 
-    m_playbackContextMenu = new QMenu(m_videoSurface);
+    // Keep the native popup owned by the player window instead of the OpenGL
+    // child so it remains above the video composition in fullscreen.
+    m_playbackContextMenu = new QMenu(this);
     m_playbackContextMenu->addAction(
         m_commandActions.value(PlayerCommand::TogglePause));
     m_playbackContextMenu->addSeparator();
@@ -1458,6 +1463,19 @@ void MainWindow::revealPlayerChrome(bool animated)
     m_playerChrome->reveal(animated);
     m_videoSurface->unsetCursor();
     m_chromeAutoHideTimer->start();
+}
+
+void MainWindow::showPlaybackContextMenu(
+    const QPoint &globalPosition)
+{
+    if (!m_playbackContextMenu || m_progressMode) {
+        return;
+    }
+    updateCommandStates();
+    const QPoint popupPosition =
+        globalPosition.isNull() ? QCursor::pos() : globalPosition;
+    m_playbackContextMenu->popup(popupPosition);
+    m_playbackContextMenu->raise();
 }
 
 void MainWindow::positionPlayerChrome()

@@ -25,6 +25,7 @@ class PlayerCore;
 class ProgressOnlyBar;
 class PlaylistPanel;
 class QMenu;
+class QPoint;
 enum class PlayerCommand;
 
 class MainWindow final : public QMainWindow {
@@ -86,6 +87,7 @@ private:
     void requestOpen(const QList<QUrl> &urls);
     void restoreAfterMinimize();
     void revealPlayerChrome(bool animated = true);
+    void showPlaybackContextMenu(const QPoint &globalPosition);
     void positionPlayerChrome();
     void positionPlaybackFeedback();
     void showPlaybackOsd(
@@ -126,4 +128,5 @@ private:
     bool m_resumeAfterWheelSeek = false;
     bool m_ignoreNextLeftRelease = false;
     bool m_playlistWasVisibleBeforeProgress = false;
+    bool m_applicationEventFilterInstalled = false;
 };
