@@ -1,6 +1,7 @@
 #include "Mpv/MpvCore.h"
 
 #include "Core/Logger.h"
+#include "Preferences/PlayerConfiguration.h"
 
 #include <QByteArray>
 #include <QDir>
@@ -355,6 +356,31 @@ MpvCore::MpvCore(QObject *parent)
     }
 
     try {
+        const QSettings settings;
+        const QString configDirectory =
+            PlayerConfiguration::mpvConfigDirectory();
+        QDir().mkpath(configDirectory);
+        const QByteArray encodedConfigDirectory =
+            QDir::toNativeSeparators(configDirectory).toUtf8();
+        requireInitializationStep(
+            mpv_set_option_string(m_mpv, "config", "yes"),
+            "Setting config=yes failed");
+        requireInitializationStep(
+            mpv_set_option_string(
+                m_mpv, "config-dir",
+                encodedConfigDirectory.constData()),
+            "Setting config-dir failed");
+        const QByteArray encodedInputConfig =
+            QDir::toNativeSeparators(
+                PlayerConfiguration::inputConfigPath(
+                    PlayerConfiguration::currentInputConfigName()))
+                .toUtf8();
+        requireInitializationStep(
+            mpv_set_option_string(
+                m_mpv, "input-conf",
+                encodedInputConfig.constData()),
+            "Setting input-conf failed");
+
         const QString watchLaterDirectory =
             QDir(QStandardPaths::writableLocation(
                      QStandardPaths::AppDataLocation))
@@ -369,12 +395,18 @@ MpvCore::MpvCore(QObject *parent)
             "Setting watch-later-directory failed");
         requireInitializationStep(
             mpv_set_option_string(
-                m_mpv, "save-position-on-quit", "yes"),
-            "Setting save-position-on-quit=yes failed");
+                m_mpv, "save-position-on-quit",
+                settings.value(
+                    QStringLiteral("history/resumePlayback"), true)
+                        .toBool() ? "yes" : "no"),
+            "Setting save-position-on-quit failed");
         requireInitializationStep(
             mpv_set_option_string(
-                m_mpv, "resume-playback", "yes"),
-            "Setting resume-playback=yes failed");
+                m_mpv, "resume-playback",
+                settings.value(
+                    QStringLiteral("history/resumePlayback"), true)
+                        .toBool() ? "yes" : "no"),
+            "Setting resume-playback failed");
         requireInitializationStep(
             mpv_set_option_string(m_mpv, "vo", "libmpv"),
             "Setting vo=libmpv failed");
@@ -384,7 +416,6 @@ MpvCore::MpvCore(QObject *parent)
         requireInitializationStep(
             mpv_set_option_string(m_mpv, "keep-open", "yes"),
             "Setting keep-open=yes failed");
-        const QSettings settings;
         const auto restoreTextOption =
             [this, &settings](const char *option, const char *key) {
                 if (!settings.contains(QString::fromLatin1(key))) {
@@ -414,6 +445,38 @@ MpvCore::MpvCore(QObject *parent)
             "secondary-sub-ass-override",
             "subtitles/assOverride");
         restoreTextOption("audio-device", "audio/device");
+
+        if (PlayerConfiguration::advancedSettingsEnabled()) {
+            for (const ConfiguredMpvOption &option :
+                 PlayerConfiguration::advancedOptions()) {
+                QString name = option.name.trimmed();
+                while (name.startsWith(QLatin1Char('-'))) {
+                    name.remove(0, 1);
+                }
+                if (name.isEmpty()) {
+                    continue;
+                }
+                const QByteArray encodedName = name.toUtf8();
+                const QByteArray encodedValue =
+                    (option.value.isEmpty()
+                         ? QStringLiteral("yes") : option.value)
+                        .toUtf8();
+                const int result = mpv_set_option_string(
+                    m_mpv, encodedName.constData(),
+                    encodedValue.constData());
+                if (result < 0) {
+                    Logger::warn(
+                        QStringLiteral(
+                            "Ignoring invalid advanced mpv option '%1': %2")
+                            .arg(name, QString::fromUtf8(
+                                           mpv_error_string(result))));
+                }
+            }
+        }
+        // The render API requires libmpv output regardless of user config.
+        requireInitializationStep(
+            mpv_set_option_string(m_mpv, "vo", "libmpv"),
+            "Restoring vo=libmpv failed");
         requireInitializationStep(
             mpv_request_log_messages(m_mpv, "warn"),
             "Requesting mpv log messages failed");

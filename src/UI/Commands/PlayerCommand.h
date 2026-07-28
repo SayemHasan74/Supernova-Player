@@ -35,6 +35,8 @@ enum class PlayerCommand {
     ToggleProgressMode,
     TogglePlaylist,
     ToggleMediaSettings,
+    ShowPlaybackHistory,
+    ShowPreferences,
     PauseAndMinimize,
 };
 
@@ -60,3 +62,7 @@ playerCommandDefinitions();
 
 [[nodiscard]] const PlayerCommandDefinition *
 playerCommandDefinition(PlayerCommand command);
+
+[[nodiscard]] QString playerCommandIdentifier(PlayerCommand command);
+[[nodiscard]] bool playerCommandFromIdentifier(
+    const QString &identifier, PlayerCommand *command);

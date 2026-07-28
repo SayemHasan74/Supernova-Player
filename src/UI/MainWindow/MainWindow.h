@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Preferences/PlayerConfiguration.h"
+
 #include <QMainWindow>
 #include <QByteArray>
 #include <QHash>
@@ -25,6 +27,8 @@ class ProgressOnlyBar;
 class PlaylistPanel;
 class MediaSettingsPanel;
 class WelcomeView;
+class HistoryWindow;
+class PreferencesDialog;
 class QMenu;
 class QPoint;
 enum class PlayerCommand;
@@ -79,6 +83,10 @@ private:
     void exitProgressMode();
     void finishEnteringProgressMode();
     void executeCommand(PlayerCommand command);
+    bool handleConfiguredKeyPress(QKeyEvent *event);
+    void reloadKeyBindings();
+    void showPlaybackHistory();
+    void showPreferences();
     [[nodiscard]] QMenu *menuForCommand(PlayerCommand command) const;
     void openFiles();
     void openUrl();
@@ -108,6 +116,8 @@ private:
     BufferingIndicator *m_bufferingIndicator = nullptr;
     PlaylistPanel *m_playlistPanel = nullptr;
     MediaSettingsPanel *m_mediaSettingsPanel = nullptr;
+    HistoryWindow *m_historyWindow = nullptr;
+    PreferencesDialog *m_preferencesDialog = nullptr;
     WelcomeView *m_welcomeView = nullptr;
     ProgressOnlyBar *m_progressBar = nullptr;
     QStackedLayout *m_contentLayout = nullptr;
@@ -115,6 +125,7 @@ private:
     QTimer *m_singleClickTimer = nullptr;
     QAction *m_fullScreenAction = nullptr;
     QHash<PlayerCommand, QAction *> m_commandActions;
+    QList<ConfiguredKeyBinding> m_keyBindings;
     QMenu *m_playbackContextMenu = nullptr;
     QString m_lastOpenDirectory;
     QByteArray m_windowedGeometry;

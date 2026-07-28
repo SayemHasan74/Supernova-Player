@@ -50,6 +50,11 @@ public:
     void toggleAbLoop();
     void removeHistoryEntries(const QStringList &keys);
     void clearHistory();
+    void setHistoryRecordingEnabled(bool enabled);
+    void setResumePlaybackEnabled(bool enabled);
+    void executeMpvCommand(const QString &command);
+    void applyMpvProfile(const QString &profile);
+    void reloadMpvConfiguration();
 
     [[nodiscard]] const QList<PlaybackHistoryEntry> &history() const noexcept
     {

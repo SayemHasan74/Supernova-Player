@@ -29,6 +29,8 @@ qt_add_executable(Supernova WIN32
     src/App/MediaSourceResolver.cpp
     src/Core/Logger.h
     src/Core/Logger.cpp
+    src/Preferences/PlayerConfiguration.h
+    src/Preferences/PlayerConfiguration.cpp
     src/Mpv/MpvCore.h
     src/Mpv/MpvCore.cpp
     src/Mpv/MpvEvent.h
@@ -62,6 +64,10 @@ qt_add_executable(Supernova WIN32
     src/UI/Media/MediaSettingsPanel.cpp
     src/UI/Welcome/WelcomeView.h
     src/UI/Welcome/WelcomeView.cpp
+    src/UI/History/HistoryWindow.h
+    src/UI/History/HistoryWindow.cpp
+    src/UI/Preferences/PreferencesDialog.h
+    src/UI/Preferences/PreferencesDialog.cpp
     src/UI/MainWindow/MainWindow.h
     src/UI/MainWindow/MainWindow.cpp
     resources/app.rc
@@ -156,6 +162,8 @@ if(BUILD_TESTING)
         src/Mpv/MpvCore.h
         src/Mpv/MpvCore.cpp
         src/Mpv/MpvEvent.h
+        src/Preferences/PlayerConfiguration.h
+        src/Preferences/PlayerConfiguration.cpp
     )
     target_include_directories(SupernovaMpvCoreTests PRIVATE src)
     target_link_libraries(
@@ -182,6 +190,8 @@ if(BUILD_TESTING)
         src/Mpv/MpvCore.h
         src/Mpv/MpvCore.cpp
         src/Mpv/MpvEvent.h
+        src/Preferences/PlayerConfiguration.h
+        src/Preferences/PlayerConfiguration.cpp
         src/PlayerCore/BufferingInfo.h
         src/PlayerCore/PlaybackInfo.h
         src/PlayerCore/MediaTrack.h
@@ -240,6 +250,8 @@ if(BUILD_TESTING)
         src/Mpv/MpvCore.h
         src/Mpv/MpvCore.cpp
         src/Mpv/MpvEvent.h
+        src/Preferences/PlayerConfiguration.h
+        src/Preferences/PlayerConfiguration.cpp
         src/PlayerCore/BufferingInfo.h
         src/PlayerCore/PlaybackInfo.h
         src/PlayerCore/MediaTrack.h
@@ -318,6 +330,26 @@ if(BUILD_TESTING)
         NAME PlaybackHistory
         COMMAND SupernovaPlaybackHistoryTests)
 
+    qt_add_executable(SupernovaPlayerConfigurationTests
+        tests/PlayerConfigurationTests.cpp
+        src/Core/Logger.h
+        src/Core/Logger.cpp
+        src/Preferences/PlayerConfiguration.h
+        src/Preferences/PlayerConfiguration.cpp
+    )
+    target_include_directories(
+        SupernovaPlayerConfigurationTests PRIVATE src)
+    target_link_libraries(
+        SupernovaPlayerConfigurationTests PRIVATE
+        Qt6::Core
+        Qt6::Test)
+    set_target_properties(
+        SupernovaPlayerConfigurationTests PROPERTIES
+        WIN32_EXECUTABLE FALSE)
+    add_test(
+        NAME PlayerConfiguration
+        COMMAND SupernovaPlayerConfigurationTests)
+
     qt_add_executable(SupernovaWelcomeViewTests
         tests/WelcomeViewTests.cpp
         src/PlayerCore/PlaybackHistory.h
@@ -343,7 +375,7 @@ if(BUILD_TESTING)
         set_tests_properties(
             MediaSourceResolver MpvCore PlayerCoreLifecycle
             MediaTrack IinaPlayerChrome PlayerCommand PlaybackHistory
-            WelcomeView PROPERTIES
+            PlayerConfiguration WelcomeView PROPERTIES
             ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
     endif()

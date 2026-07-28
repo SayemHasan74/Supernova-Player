@@ -11,6 +11,8 @@
 #include "UI/Playlist/PlaylistPanel.h"
 #include "UI/Media/MediaSettingsPanel.h"
 #include "UI/Welcome/WelcomeView.h"
+#include "UI/History/HistoryWindow.h"
+#include "UI/Preferences/PreferencesDialog.h"
 #include "UI/Design/DesignTokens.h"
 
 #include <QAction>
@@ -118,44 +120,42 @@ bool shouldIgnorePlaybackShortcutTarget(const QWidget *widget)
     return qobject_cast<const QLineEdit *>(widget) != nullptr;
 }
 
-bool handlePlaybackKeyPress(
-    MainWindow *window, PlayerCore *playerCore, const QHash<PlayerCommand, QAction *> &actions,
-    QKeyEvent *event)
+QKeySequence keySequenceForMpvKey(const QString &mpvKey)
 {
-    Q_UNUSED(playerCore)
-    if (!window || !event || event->isAutoRepeat()) {
-        return false;
+    QString key = mpvKey.trimmed();
+    if (key == QStringLiteral(",")) {
+        return QKeySequence(Qt::Key_Comma);
     }
-
-    const PlayerCommand command = [&]() {
-        switch (event->key()) {
-        case Qt::Key_Space:
-            return PlayerCommand::TogglePause;
-        case Qt::Key_Left:
-            return PlayerCommand::SeekBackward;
-        case Qt::Key_Right:
-            return PlayerCommand::SeekForward;
-        case Qt::Key_Up:
-            return PlayerCommand::VolumeUp;
-        case Qt::Key_Down:
-            return PlayerCommand::VolumeDown;
-        default:
-            return static_cast<PlayerCommand>(-1);
+    if (key == QStringLiteral(".")) {
+        return QKeySequence(Qt::Key_Period);
+    }
+    const QList<QPair<QString, QString>> names{
+        {QStringLiteral("SPACE"), QStringLiteral("Space")},
+        {QStringLiteral("LEFT"), QStringLiteral("Left")},
+        {QStringLiteral("RIGHT"), QStringLiteral("Right")},
+        {QStringLiteral("UP"), QStringLiteral("Up")},
+        {QStringLiteral("DOWN"), QStringLiteral("Down")},
+        {QStringLiteral("PGUP"), QStringLiteral("PgUp")},
+        {QStringLiteral("PGDWN"), QStringLiteral("PgDown")},
+        {QStringLiteral("HOME"), QStringLiteral("Home")},
+        {QStringLiteral("END"), QStringLiteral("End")},
+        {QStringLiteral("ESC"), QStringLiteral("Escape")},
+        {QStringLiteral("ENTER"), QStringLiteral("Return")},
+        {QStringLiteral("KP_ENTER"), QStringLiteral("Enter")},
+        {QStringLiteral("BS"), QStringLiteral("Backspace")},
+        {QStringLiteral("DEL"), QStringLiteral("Delete")},
+        {QStringLiteral("INS"), QStringLiteral("Insert")}};
+    QStringList parts = key.split(QLatin1Char('+'));
+    if (!parts.isEmpty()) {
+        for (const auto &[mpvName, qtName] : names) {
+            if (parts.last().compare(mpvName, Qt::CaseInsensitive) == 0) {
+                parts.last() = qtName;
+                break;
+            }
         }
-    }();
-
-    if (command == static_cast<PlayerCommand>(-1)) {
-        return false;
+        key = parts.join(QLatin1Char('+'));
     }
-
-    QAction *action = actions.value(command);
-    if (!action || !action->isEnabled()) {
-        return true;
-    }
-
-    action->trigger();
-    event->accept();
-    return true;
+    return QKeySequence::fromString(key, QKeySequence::PortableText);
 }
 } // namespace
 
@@ -168,6 +168,22 @@ MainWindow::MainWindow(PlayerCore *playerCore, QWidget *parent)
     }
     setupWindowChrome();
     setupMenus();
+    m_historyWindow = new HistoryWindow(this);
+    m_historyWindow->setHistory(m_playerCore->history());
+    connect(m_historyWindow, &HistoryWindow::playRequested,
+            m_playerCore, &PlayerCore::openUrls);
+    connect(m_historyWindow, &HistoryWindow::removeRequested,
+            m_playerCore, &PlayerCore::removeHistoryEntries);
+    connect(m_historyWindow, &HistoryWindow::clearRequested,
+            m_playerCore, &PlayerCore::clearHistory);
+    connect(m_playerCore, &PlayerCore::historyChanged,
+            m_historyWindow, &HistoryWindow::setHistory);
+    m_preferencesDialog =
+        new PreferencesDialog(m_playerCore, this);
+    connect(m_preferencesDialog,
+            &PreferencesDialog::keyBindingsChanged,
+            this, &MainWindow::reloadKeyBindings);
+    reloadKeyBindings();
     // Keep one responder chain for every layer of the player window. This is
     // the Qt equivalent of IINA routing rendering-view input back through its
     // player-window controller, and it remains intact in fullscreen.
@@ -650,11 +666,28 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
             || event->type() == QEvent::Enter)) {
         revealPlayerChrome();
     }
+    if (isPlaybackUi
+        && event->type() == QEvent::ShortcutOverride) {
+        auto *keyEvent = static_cast<QKeyEvent *>(event);
+        const QKeySequence pressed(keyEvent->keyCombination());
+        bool configured = keyEvent->key() == Qt::Key_Escape;
+        for (const ConfiguredKeyBinding &binding :
+             std::as_const(m_keyBindings)) {
+            if (keySequenceForMpvKey(binding.key).matches(pressed)
+                == QKeySequence::ExactMatch) {
+                configured = true;
+                break;
+            }
+        }
+        if (configured) {
+            keyEvent->accept();
+            return true;
+        }
+    }
     if (isPlaybackUi && event->type() == QEvent::KeyPress) {
         auto *keyEvent = static_cast<QKeyEvent *>(event);
         if (!shouldIgnorePlaybackShortcutTarget(watchedWidget)
-            && handlePlaybackKeyPress(
-                this, m_playerCore, m_commandActions, keyEvent)) {
+            && handleConfiguredKeyPress(keyEvent)) {
             return true;
         }
     }
@@ -686,8 +719,7 @@ bool MainWindow::nativeEvent(
 void MainWindow::keyPressEvent(QKeyEvent *event)
 {
     if (!shouldIgnorePlaybackShortcutTarget(focusWidget())
-        && handlePlaybackKeyPress(
-            this, m_playerCore, m_commandActions, event)) {
+        && handleConfiguredKeyPress(event)) {
         return;
     }
     QMainWindow::keyPressEvent(event);
@@ -884,6 +916,8 @@ void MainWindow::setupWindowChrome()
             this, &MainWindow::openFiles);
     connect(m_welcomeView, &WelcomeView::openUrlRequested,
             this, &MainWindow::openUrl);
+    connect(m_welcomeView, &WelcomeView::showHistoryRequested,
+            this, &MainWindow::showPlaybackHistory);
     connect(m_welcomeView, &WelcomeView::historyRequested,
             this, [this](const QUrl &url) {
                 requestOpen({url});
@@ -1087,11 +1121,124 @@ void MainWindow::executeCommand(PlayerCommand command)
     case PlayerCommand::ToggleMediaSettings:
         toggleMediaSettings();
         break;
+    case PlayerCommand::ShowPlaybackHistory:
+        showPlaybackHistory();
+        break;
+    case PlayerCommand::ShowPreferences:
+        showPreferences();
+        break;
     case PlayerCommand::PauseAndMinimize:
         pauseAndMinimize();
         break;
     }
     updateCommandStates();
+}
+
+bool MainWindow::handleConfiguredKeyPress(QKeyEvent *event)
+{
+    if (!event) {
+        return false;
+    }
+    // Escape is a permanent player-level behavior requested for Supernova.
+    // It remains available even if a user input profile is malformed.
+    if (event->key() == Qt::Key_Escape) {
+        executeCommand(PlayerCommand::PauseAndMinimize);
+        event->accept();
+        return true;
+    }
+
+    const QKeySequence pressed(event->keyCombination());
+    for (auto it = m_keyBindings.crbegin();
+         it != m_keyBindings.crend(); ++it) {
+        if (keySequenceForMpvKey(it->key).matches(pressed)
+            != QKeySequence::ExactMatch) {
+            continue;
+        }
+        if (it->applicationCommand) {
+            PlayerCommand command;
+            if (!playerCommandFromIdentifier(it->action, &command)) {
+                return true;
+            }
+            if (event->isAutoRepeat()
+                && command != PlayerCommand::SeekBackward
+                && command != PlayerCommand::SeekForward
+                && command != PlayerCommand::VolumeDown
+                && command != PlayerCommand::VolumeUp
+                && command != PlayerCommand::FrameBackward
+                && command != PlayerCommand::FrameForward) {
+                event->accept();
+                return true;
+            }
+            if (QAction *action = m_commandActions.value(command);
+                !action || action->isEnabled()) {
+                executeCommand(command);
+            }
+        } else {
+            m_playerCore->executeMpvCommand(it->action);
+        }
+        event->accept();
+        return true;
+    }
+    return false;
+}
+
+void MainWindow::reloadKeyBindings()
+{
+    m_keyBindings = PlayerConfiguration::currentKeyBindings();
+    for (QAction *action : std::as_const(m_commandActions)) {
+        if (action) {
+            action->setShortcuts({});
+        }
+    }
+
+    QHash<PlayerCommand, QList<QKeySequence>> shortcuts;
+    for (auto it = m_keyBindings.crbegin();
+         it != m_keyBindings.crend(); ++it) {
+        if (!it->applicationCommand) {
+            continue;
+        }
+        PlayerCommand command;
+        const QKeySequence shortcut = keySequenceForMpvKey(it->key);
+        if (!shortcut.isEmpty()
+            && playerCommandFromIdentifier(it->action, &command)) {
+            const bool alreadyAssigned = std::any_of(
+                shortcuts.cbegin(), shortcuts.cend(),
+                [&shortcut](const QList<QKeySequence> &sequences) {
+                    return sequences.contains(shortcut);
+                });
+            if (!alreadyAssigned) {
+                shortcuts[command].prepend(shortcut);
+            }
+        }
+    }
+    shortcuts[PlayerCommand::PauseAndMinimize].append(
+        QKeySequence(Qt::Key_Escape));
+    for (auto it = shortcuts.cbegin(); it != shortcuts.cend(); ++it) {
+        if (QAction *action = m_commandActions.value(it.key())) {
+            action->setShortcuts(it.value());
+        }
+    }
+}
+
+void MainWindow::showPlaybackHistory()
+{
+    if (!m_historyWindow) {
+        return;
+    }
+    m_historyWindow->setHistory(m_playerCore->history());
+    m_historyWindow->show();
+    m_historyWindow->raise();
+    m_historyWindow->activateWindow();
+}
+
+void MainWindow::showPreferences()
+{
+    if (!m_preferencesDialog) {
+        return;
+    }
+    m_preferencesDialog->show();
+    m_preferencesDialog->raise();
+    m_preferencesDialog->activateWindow();
 }
 
 void MainWindow::updateCommandStates()

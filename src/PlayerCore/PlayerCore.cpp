@@ -3,6 +3,7 @@
 #include "App/MediaSourceResolver.h"
 #include "Core/Logger.h"
 #include "Mpv/MpvCore.h"
+#include "Preferences/PlayerConfiguration.h"
 
 #include <algorithm>
 #include <cmath>
@@ -12,6 +13,7 @@
 #include <QStringList>
 #include <QSettings>
 #include <QRegularExpression>
+#include <QProcess>
 #include <utility>
 
 namespace {
@@ -45,6 +47,8 @@ PlayerCore::PlayerCore(QObject *parent)
     : QObject(parent),
       m_mpv(std::make_unique<MpvCore>())
 {
+    m_history.setRecordingEnabled(QSettings().value(
+        QStringLiteral("history/recordPlaybackHistory"), true).toBool());
     connect(m_mpv.get(), &MpvCore::propertyChanged,
             this, &PlayerCore::onMpvPropertyChanged);
     connect(m_mpv.get(), &MpvCore::fileStarted,
@@ -183,8 +187,9 @@ void PlayerCore::openUrl(const QUrl &url)
 void PlayerCore::openPrimaryUrl(const QUrl &url)
 {
     savePlaybackPosition();
-    m_pendingResumePosition =
-        m_history.entryFor(url).resumePosition();
+    m_pendingResumePosition = QSettings().value(
+        QStringLiteral("history/resumePlayback"), true).toBool()
+        ? m_history.entryFor(url).resumePosition() : 0.0;
     m_info.currentUrl = url;
     emit currentUrlChanged(url);
     m_info.isNetworkResource = !url.isLocalFile();
@@ -595,6 +600,78 @@ void PlayerCore::clearHistory()
     m_history.clear();
     emit historyChanged(m_history.entries());
     synchronizePlaylist();
+}
+
+void PlayerCore::setHistoryRecordingEnabled(bool enabled)
+{
+    QSettings().setValue(
+        QStringLiteral("history/recordPlaybackHistory"), enabled);
+    m_history.setRecordingEnabled(enabled);
+}
+
+void PlayerCore::setResumePlaybackEnabled(bool enabled)
+{
+    QSettings().setValue(
+        QStringLiteral("history/resumePlayback"), enabled);
+    if (canAccessMpv()) {
+        m_mpv->setFlag(QStringLiteral("save-position-on-quit"), enabled);
+        m_mpv->setFlag(QStringLiteral("resume-playback"), enabled);
+    }
+}
+
+void PlayerCore::executeMpvCommand(const QString &command)
+{
+    if (!canAccessMpv()) {
+        return;
+    }
+    const QStringList commands =
+        command.split(QLatin1Char(';'), Qt::SkipEmptyParts);
+    static const QStringList inputPrefixes{
+        QStringLiteral("no-osd"),
+        QStringLiteral("osd-auto"),
+        QStringLiteral("osd-bar"),
+        QStringLiteral("osd-msg"),
+        QStringLiteral("raw"),
+        QStringLiteral("expand-properties"),
+        QStringLiteral("repeatable"),
+        QStringLiteral("async")};
+    for (const QString &commandText : commands) {
+        QStringList arguments =
+            QProcess::splitCommand(commandText.trimmed());
+        while (!arguments.isEmpty()
+               && inputPrefixes.contains(arguments.constFirst())) {
+            arguments.removeFirst();
+        }
+        if (arguments.isEmpty()) {
+            continue;
+        }
+        QVariantList nativeArguments;
+        nativeArguments.reserve(arguments.size());
+        for (const QString &argument : std::as_const(arguments)) {
+            nativeArguments.append(argument);
+        }
+        m_mpv->command(nativeArguments);
+    }
+}
+
+void PlayerCore::reloadMpvConfiguration()
+{
+    if (!canAccessMpv()) {
+        return;
+    }
+    m_mpv->command({
+        QStringLiteral("load-config-file"),
+        PlayerConfiguration::mpvConfigFilePath()});
+}
+
+void PlayerCore::applyMpvProfile(const QString &profile)
+{
+    if (!canAccessMpv() || profile.trimmed().isEmpty()) {
+        return;
+    }
+    reloadMpvConfiguration();
+    m_mpv->command({
+        QStringLiteral("apply-profile"), profile.trimmed()});
 }
 
 void PlayerCore::seekPercent(double percent, bool forceExact)
@@ -1296,7 +1373,7 @@ void PlayerCore::onMpvPropertyChanged(
                 m_info.videoPositionSec
                 - m_lastHistorySavePosition) >= 10.0) {
             m_lastHistorySavePosition = m_info.videoPositionSec;
-            m_history.save();
+            m_history.saveAsync();
             emit historyChanged(m_history.entries());
             synchronizePlaylist();
         }
@@ -1470,7 +1547,9 @@ void PlayerCore::onMpvFileStarted(const QString &path)
         if (startedUrl.isValid()
             && startedUrl != m_info.currentUrl) {
             m_pendingResumePosition =
-                m_history.entryFor(startedUrl).resumePosition();
+                QSettings().value(
+                    QStringLiteral("history/resumePlayback"), true).toBool()
+                ? m_history.entryFor(startedUrl).resumePosition() : 0.0;
             m_info.currentUrl = startedUrl;
             m_info.isNetworkResource = !startedUrl.isLocalFile();
             emit currentUrlChanged(startedUrl);

@@ -8,6 +8,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QHash>
 #include <QSaveFile>
 #include <QStandardPaths>
 
@@ -30,17 +31,34 @@ double PlaybackHistoryEntry::resumePosition() const noexcept
     return positionSec;
 }
 
+double PlaybackHistoryEntry::progressRatio() const noexcept
+{
+    if (durationSec <= 0.0 || !std::isfinite(positionSec)
+        || !std::isfinite(durationSec)) {
+        return 0.0;
+    }
+    return std::clamp(positionSec / durationSec, 0.0, 1.0);
+}
+
+bool PlaybackHistoryEntry::isAvailable() const
+{
+    return !url.isLocalFile() || QFileInfo::exists(url.toLocalFile());
+}
+
 PlaybackHistoryStore::PlaybackHistoryStore(
     const QString &historyFilePath)
     : m_filePath(historyFilePath.isEmpty()
                      ? defaultHistoryFilePath()
                      : historyFilePath)
 {
+    m_savePool.setMaxThreadCount(1);
+    m_savePool.setExpiryTimeout(-1);
     load();
 }
 
 PlaybackHistoryStore::~PlaybackHistoryStore()
 {
+    m_savePool.waitForDone();
     save();
 }
 
@@ -114,6 +132,9 @@ PlaybackHistoryEntry &PlaybackHistoryStore::ensureEntry(
     if (entry.displayName.isEmpty()) {
         entry.displayName = url.host();
     }
+    entry.location = url.isLocalFile()
+        ? QFileInfo(url.toLocalFile()).absolutePath()
+        : url.host();
     m_entries.append(entry);
     return m_entries.last();
 }
@@ -121,32 +142,53 @@ PlaybackHistoryEntry &PlaybackHistoryStore::ensureEntry(
 void PlaybackHistoryStore::recordLoaded(
     const QUrl &url, double durationSec, const QString &title)
 {
-    if (!url.isValid() || url.isEmpty()) {
+    if (!m_recordingEnabled || !url.isValid() || url.isEmpty()) {
         return;
     }
     PlaybackHistoryEntry &entry = ensureEntry(url);
+    if (entry.completed) {
+        entry.positionSec = 0.0;
+    }
     entry.url = url;
-    entry.durationSec = std::max(entry.durationSec, durationSec);
+    if (std::isfinite(durationSec) && durationSec > 0.0) {
+        entry.durationSec = durationSec;
+    }
     entry.lastPlayed = QDateTime::currentDateTimeUtc();
+    entry.completed = false;
     if (!title.isEmpty()) {
         entry.title = title;
     }
+    if (url.isLocalFile()) {
+        const QFileInfo info(url.toLocalFile());
+        entry.displayName = info.fileName();
+        entry.location = info.absolutePath();
+        entry.fileSize = info.exists() ? info.size() : -1;
+        entry.fileModified =
+            info.exists() ? info.lastModified().toUTC() : QDateTime();
+    } else {
+        entry.location = url.host();
+        if (entry.displayName.isEmpty()) {
+            entry.displayName = url.toDisplayString();
+        }
+    }
     m_dirty = true;
     sortNewestFirst();
-    save();
+    saveAsync();
 }
 
 void PlaybackHistoryStore::updateProgress(
     const QUrl &url, double positionSec, double durationSec,
     bool reachedEnd)
 {
-    if (!url.isValid() || url.isEmpty()) {
+    if (!m_recordingEnabled || !url.isValid() || url.isEmpty()) {
         return;
     }
     PlaybackHistoryEntry &entry = ensureEntry(url);
-    entry.positionSec = std::max(0.0, positionSec);
-    entry.durationSec = std::max(entry.durationSec, durationSec);
-    entry.lastPlayed = QDateTime::currentDateTimeUtc();
+    entry.positionSec = std::max(
+        0.0, std::isfinite(positionSec) ? positionSec : 0.0);
+    entry.durationSec = std::max(
+        entry.durationSec,
+        std::isfinite(durationSec) ? durationSec : 0.0);
     entry.completed = reachedEnd
         || (entry.durationSec > 0.0
             && entry.positionSec
@@ -173,10 +215,37 @@ void PlaybackHistoryStore::clear()
 
 bool PlaybackHistoryStore::save()
 {
+    m_savePool.waitForDone();
     if (!m_dirty) {
         return true;
     }
-    QDir().mkpath(QFileInfo(m_filePath).absolutePath());
+    const QByteArray contents = serializedHistory();
+    const bool written = writeHistory(m_filePath, contents);
+    if (written) {
+        m_dirty = false;
+    }
+    return written;
+}
+
+void PlaybackHistoryStore::saveAsync()
+{
+    if (!m_dirty) {
+        return;
+    }
+    const QString path = m_filePath;
+    const QByteArray contents = serializedHistory();
+    m_dirty = false;
+    m_savePool.start([path, contents] {
+        if (!PlaybackHistoryStore::writeHistory(path, contents)) {
+            Logger::warn(
+                QStringLiteral("Could not asynchronously write playback history: %1")
+                    .arg(path));
+        }
+    });
+}
+
+QByteArray PlaybackHistoryStore::serializedHistory() const
+{
     QJsonArray values;
     for (const PlaybackHistoryEntry &entry : std::as_const(m_entries)) {
         values.append(QJsonObject{
@@ -185,27 +254,40 @@ bool PlaybackHistoryStore::save()
              entry.url.toString(QUrl::FullyEncoded)},
             {QStringLiteral("name"), entry.displayName},
             {QStringLiteral("title"), entry.title},
+            {QStringLiteral("location"), entry.location},
+            {QStringLiteral("fileSize"), entry.fileSize},
+            {QStringLiteral("fileModified"),
+             entry.fileModified.toString(Qt::ISODateWithMs)},
             {QStringLiteral("position"), entry.positionSec},
             {QStringLiteral("duration"), entry.durationSec},
             {QStringLiteral("lastPlayed"),
              entry.lastPlayed.toString(Qt::ISODateWithMs)},
             {QStringLiteral("completed"), entry.completed}});
     }
-    QSaveFile file(m_filePath);
+    return QJsonDocument(
+        QJsonObject{{QStringLiteral("version"), 2},
+                    {QStringLiteral("entries"), values}})
+        .toJson(QJsonDocument::Indented);
+}
+
+bool PlaybackHistoryStore::writeHistory(
+    const QString &path, const QByteArray &contents)
+{
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly)) {
         Logger::warn(
             QStringLiteral("Could not write playback history: %1")
-                .arg(m_filePath));
+                .arg(path));
         return false;
     }
-    file.write(QJsonDocument(
-        QJsonObject{{QStringLiteral("version"), 1},
-                    {QStringLiteral("entries"), values}})
-                   .toJson(QJsonDocument::Indented));
+    if (file.write(contents) != contents.size()) {
+        file.cancelWriting();
+        return false;
+    }
     if (!file.commit()) {
         return false;
     }
-    m_dirty = false;
     return true;
 }
 
@@ -219,6 +301,7 @@ void PlaybackHistoryStore::load()
         QJsonDocument::fromJson(file.readAll());
     const QJsonArray values =
         document.object().value(QStringLiteral("entries")).toArray();
+    QHash<QString, qsizetype> indexByKey;
     for (const QJsonValue &value : values) {
         const QJsonObject object = value.toObject();
         PlaybackHistoryEntry entry;
@@ -233,17 +316,42 @@ void PlaybackHistoryStore::load()
             object.value(QStringLiteral("name")).toString();
         entry.title =
             object.value(QStringLiteral("title")).toString();
-        entry.positionSec =
-            object.value(QStringLiteral("position")).toDouble();
-        entry.durationSec =
-            object.value(QStringLiteral("duration")).toDouble();
+        entry.location =
+            object.value(QStringLiteral("location")).toString();
+        entry.fileSize =
+            object.value(QStringLiteral("fileSize")).toInteger(-1);
+        entry.fileModified = QDateTime::fromString(
+            object.value(QStringLiteral("fileModified")).toString(),
+            Qt::ISODateWithMs);
+        entry.positionSec = std::max(
+            0.0, object.value(QStringLiteral("position")).toDouble());
+        entry.durationSec = std::max(
+            0.0, object.value(QStringLiteral("duration")).toDouble());
         entry.lastPlayed = QDateTime::fromString(
             object.value(QStringLiteral("lastPlayed")).toString(),
             Qt::ISODateWithMs);
         entry.completed =
             object.value(QStringLiteral("completed")).toBool();
-        if (entry.url.isValid() && !entry.key.isEmpty()) {
-            m_entries.append(entry);
+        if (entry.location.isEmpty()) {
+            entry.location = entry.url.isLocalFile()
+                ? QFileInfo(entry.url.toLocalFile()).absolutePath()
+                : entry.url.host();
+        }
+        if (entry.displayName.isEmpty()) {
+            entry.displayName = entry.url.isLocalFile()
+                ? QFileInfo(entry.url.toLocalFile()).fileName()
+                : entry.url.fileName();
+        }
+        if (entry.url.isValid() && !entry.url.isEmpty()
+            && !entry.key.isEmpty()) {
+            const auto duplicate = indexByKey.constFind(entry.key);
+            if (duplicate == indexByKey.cend()) {
+                indexByKey.insert(entry.key, m_entries.size());
+                m_entries.append(entry);
+            } else if (entry.lastPlayed
+                       > m_entries[*duplicate].lastPlayed) {
+                m_entries[*duplicate] = entry;
+            }
         }
     }
     sortNewestFirst();

@@ -208,6 +208,14 @@ WelcomeView::WelcomeView(QWidget *parent)
     m_recentList->installEventFilter(this);
     m_recentList->viewport()->installEventFilter(this);
     layout->addWidget(m_recentList, 1);
+    m_historyButton = new WelcomeActionButton(actions);
+    m_historyButton->setObjectName(
+        QStringLiteral("welcomeHistoryButton"));
+    static_cast<WelcomeActionButton *>(m_historyButton)->setLabels(
+        tr("Playback History…"), QStringLiteral("Ctrl+H"));
+    m_historyButton->setFixedHeight(28);
+    m_historyButton->hide();
+    layout->addWidget(m_historyButton);
     root->addWidget(actions, 1);
 
     connect(openButton, &QPushButton::clicked,
@@ -229,6 +237,8 @@ WelcomeView::WelcomeView(QWidget *parent)
                 emit historyRequested(
                     item->data(Qt::UserRole).toUrl());
             });
+    connect(m_historyButton, &QPushButton::clicked,
+            this, &WelcomeView::showHistoryRequested);
 }
 
 void WelcomeView::setHistory(
@@ -248,6 +258,7 @@ void WelcomeView::setHistory(
     m_recentList->clear();
     if (m_visibleHistory.isEmpty()) {
         m_resumeButton->hide();
+        m_historyButton->hide();
         return;
     }
 
@@ -257,6 +268,7 @@ void WelcomeView::setHistory(
         formatTime(latest.positionSec));
     m_resumeButton->setToolTip(latest.url.toDisplayString());
     m_resumeButton->show();
+    m_historyButton->show();
 
     QFileIconProvider iconProvider;
     for (int index = 1; index < m_visibleHistory.size(); ++index) {

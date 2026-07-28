@@ -78,11 +78,74 @@ const QList<PlayerCommandDefinition> &playerCommandDefinitions()
          {QStringLiteral("Ctrl+Shift+P")}, false, true},
         {PlayerCommand::ToggleMediaSettings, PlayerMenu::Window,
          QStringLiteral("Quick Settings"), {}, true, true},
+        {PlayerCommand::ShowPlaybackHistory, PlayerMenu::Window,
+         QStringLiteral("Playback History…"),
+         {QStringLiteral("Ctrl+H")}},
+        {PlayerCommand::ShowPreferences, PlayerMenu::Window,
+         QStringLiteral("Preferences…"),
+         {QStringLiteral("Ctrl+,")}},
         {PlayerCommand::PauseAndMinimize, PlayerMenu::Window,
          QStringLiteral("Pause and Minimize"),
          {QStringLiteral("Escape")}},
     };
     return definitions;
+}
+
+QString playerCommandIdentifier(PlayerCommand command)
+{
+    switch (command) {
+    case PlayerCommand::OpenFile: return QStringLiteral("OpenFile");
+    case PlayerCommand::OpenFolder: return QStringLiteral("OpenFolder");
+    case PlayerCommand::ImportPlaylist: return QStringLiteral("ImportPlaylist");
+    case PlayerCommand::SavePlaylist: return QStringLiteral("SavePlaylist");
+    case PlayerCommand::CloseWindow: return QStringLiteral("CloseWindow");
+    case PlayerCommand::QuitApplication: return QStringLiteral("QuitApplication");
+    case PlayerCommand::TogglePause: return QStringLiteral("TogglePause");
+    case PlayerCommand::Stop: return QStringLiteral("Stop");
+    case PlayerCommand::PreviousMedia: return QStringLiteral("PreviousMedia");
+    case PlayerCommand::NextMedia: return QStringLiteral("NextMedia");
+    case PlayerCommand::PreviousChapter: return QStringLiteral("PreviousChapter");
+    case PlayerCommand::NextChapter: return QStringLiteral("NextChapter");
+    case PlayerCommand::ToggleAbLoop: return QStringLiteral("ToggleAbLoop");
+    case PlayerCommand::SeekBackward: return QStringLiteral("SeekBackward");
+    case PlayerCommand::SeekForward: return QStringLiteral("SeekForward");
+    case PlayerCommand::JumpToBeginning: return QStringLiteral("JumpToBeginning");
+    case PlayerCommand::FrameBackward: return QStringLiteral("FrameBackward");
+    case PlayerCommand::FrameForward: return QStringLiteral("FrameForward");
+    case PlayerCommand::VolumeDown: return QStringLiteral("VolumeDown");
+    case PlayerCommand::VolumeUp: return QStringLiteral("VolumeUp");
+    case PlayerCommand::ToggleMute: return QStringLiteral("ToggleMute");
+    case PlayerCommand::SpeedDown: return QStringLiteral("SpeedDown");
+    case PlayerCommand::SpeedUp: return QStringLiteral("SpeedUp");
+    case PlayerCommand::ResetSpeed: return QStringLiteral("ResetSpeed");
+    case PlayerCommand::TakeScreenshot: return QStringLiteral("TakeScreenshot");
+    case PlayerCommand::ToggleFullScreen: return QStringLiteral("ToggleFullScreen");
+    case PlayerCommand::ToggleAlwaysOnTop: return QStringLiteral("ToggleAlwaysOnTop");
+    case PlayerCommand::ToggleProgressMode: return QStringLiteral("ToggleProgressMode");
+    case PlayerCommand::TogglePlaylist: return QStringLiteral("TogglePlaylist");
+    case PlayerCommand::ToggleMediaSettings: return QStringLiteral("ToggleMediaSettings");
+    case PlayerCommand::ShowPlaybackHistory: return QStringLiteral("ShowPlaybackHistory");
+    case PlayerCommand::ShowPreferences: return QStringLiteral("ShowPreferences");
+    case PlayerCommand::PauseAndMinimize: return QStringLiteral("PauseAndMinimize");
+    }
+    return {};
+}
+
+bool playerCommandFromIdentifier(
+    const QString &identifier, PlayerCommand *command)
+{
+    if (!command) {
+        return false;
+    }
+    for (const PlayerCommandDefinition &definition :
+         playerCommandDefinitions()) {
+        if (playerCommandIdentifier(definition.command).compare(
+                identifier.trimmed(), Qt::CaseInsensitive) == 0) {
+            *command = definition.command;
+            return true;
+        }
+    }
+    return false;
 }
 
 const PlayerCommandDefinition *playerCommandDefinition(

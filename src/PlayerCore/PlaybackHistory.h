@@ -1,9 +1,11 @@
 #pragma once
 
+#include <QByteArray>
 #include <QDateTime>
 #include <QList>
 #include <QString>
 #include <QStringList>
+#include <QThreadPool>
 #include <QUrl>
 
 struct PlaybackHistoryEntry {
@@ -11,12 +13,17 @@ struct PlaybackHistoryEntry {
     QUrl url;
     QString displayName;
     QString title;
+    QString location;
+    qint64 fileSize = -1;
+    QDateTime fileModified;
     double positionSec = 0.0;
     double durationSec = 0.0;
     QDateTime lastPlayed;
     bool completed = false;
 
     [[nodiscard]] double resumePosition() const noexcept;
+    [[nodiscard]] double progressRatio() const noexcept;
+    [[nodiscard]] bool isAvailable() const;
 
     friend bool operator==(
         const PlaybackHistoryEntry &,
@@ -44,6 +51,14 @@ public:
     [[nodiscard]] PlaybackHistoryEntry entryFor(
         const QUrl &url) const;
     [[nodiscard]] QString filePath() const { return m_filePath; }
+    [[nodiscard]] bool recordingEnabled() const noexcept
+    {
+        return m_recordingEnabled;
+    }
+    void setRecordingEnabled(bool enabled) noexcept
+    {
+        m_recordingEnabled = enabled;
+    }
 
     void recordLoaded(
         const QUrl &url, double durationSec,
@@ -54,15 +69,21 @@ public:
     void remove(const QStringList &keys);
     void clear();
     bool save();
+    void saveAsync();
 
 private:
     void load();
     PlaybackHistoryEntry &ensureEntry(const QUrl &url);
     void sortNewestFirst();
+    [[nodiscard]] QByteArray serializedHistory() const;
+    static bool writeHistory(
+        const QString &path, const QByteArray &contents);
 
     QString m_filePath;
     QList<PlaybackHistoryEntry> m_entries;
+    QThreadPool m_savePool;
     bool m_dirty = false;
+    bool m_recordingEnabled = true;
 };
 
 Q_DECLARE_METATYPE(PlaybackHistoryEntry)
