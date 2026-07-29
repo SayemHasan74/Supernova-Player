@@ -25,6 +25,8 @@ qt_add_executable(Supernova WIN32
     src/App/SingleInstanceGuard.cpp
     src/App/CommandLineArgs.h
     src/App/CommandLineArgs.cpp
+    src/App/PlayerWindowManager.h
+    src/App/PlayerWindowManager.cpp
     src/App/MediaSourceResolver.h
     src/App/MediaSourceResolver.cpp
     src/App/AutomaticFileMatcher.h

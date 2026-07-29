@@ -1,19 +1,16 @@
 #include "App/Application.h"
 #include "App/CommandLineArgs.h"
 #include "App/MediaSourceResolver.h"
+#include "App/PlayerWindowManager.h"
 #include "App/SingleInstanceGuard.h"
 #include "Core/Logger.h"
-#include "PlayerCore/PlayerCore.h"
-#include "UI/MainWindow/MainWindow.h"
 
 #include <QCoreApplication>
 #include <QList>
 #include <QObject>
-#include <QSize>
 #include <QUrl>
 
 #include <exception>
-#include <utility>
 
 namespace {
 QList<QUrl> mediaUrls(const QStringList &paths)
@@ -50,44 +47,14 @@ int main(int argc, char *argv[])
                           QStringLiteral(SUPERNOVA_CHANNEL)));
 
     try {
-        PlayerCore playerCore;
-        MainWindow window(&playerCore);
-        QList<QUrl> pendingUrls;
-
-        const auto openWhenRendererReady =
-            [&window, &playerCore, &pendingUrls](const QList<QUrl> &urls) {
-                if (urls.isEmpty()) {
-                    return;
-                }
-                if (window.isRenderContextReady()) {
-                    playerCore.openUrls(urls);
-                } else {
-                    pendingUrls = urls;
-                }
-            };
-
-        QObject::connect(
-            &window, &MainWindow::renderContextReady,
-            &playerCore, [&playerCore, &pendingUrls] {
-                if (pendingUrls.isEmpty()) {
-                    return;
-                }
-                playerCore.openUrls(std::exchange(pendingUrls, {}));
-            });
-
-        QObject::connect(
-            &window, &MainWindow::openUrlsRequested,
-            &playerCore, openWhenRendererReady);
+        PlayerWindowManager players;
 
         QObject::connect(
             &guard,
             &SingleInstanceGuard::argumentsReceivedFromNewInstance,
-            &window,
-            [&window, &openWhenRendererReady](
+            &players,
+            [&players](
                 const QStringList &arguments) {
-                window.show();
-                window.raise();
-                window.activateWindow();
                 Logger::info(
                     QStringLiteral("Received forwarded args: %1")
                         .arg(arguments.join(QStringLiteral(", "))));
@@ -97,18 +64,13 @@ int main(int argc, char *argv[])
                 forwardedArguments.append(arguments);
                 const CommandLineArgs parsedForwarded =
                     CommandLineArgs::parse(forwardedArguments);
-                openWhenRendererReady(
-                    mediaUrls(parsedForwarded.mediaPaths));
+                players.open(
+                    mediaUrls(parsedForwarded.mediaPaths),
+                    parsedForwarded.forceNewWindow);
             });
 
-        if (!parsedArguments.mediaPaths.isEmpty()) {
-            openWhenRendererReady(mediaUrls(parsedArguments.mediaPaths));
-        }
-
-        window.resize(
-            parsedArguments.mediaPaths.isEmpty() ? QSize(640, 400)
-                                                 : QSize(1280, 720));
-        window.show();
+        players.createPlayer(
+            mediaUrls(parsedArguments.mediaPaths));
         return app.exec();
     } catch (const std::exception &error) {
         Logger::error(

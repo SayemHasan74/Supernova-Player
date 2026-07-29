@@ -49,6 +49,7 @@
 #include <QStackedLayout>
 #include <QTimer>
 #include <QWheelEvent>
+#include <QWindow>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -309,6 +310,11 @@ void MainWindow::toggleFullScreen()
     if (m_progressMode) {
         return;
     }
+    if (m_compactMode != CompactMode::Normal) {
+        exitCompactMode();
+        QTimer::singleShot(0, this, &MainWindow::toggleFullScreen);
+        return;
+    }
     switch (m_fullScreenState) {
     case FullScreenState::Windowed:
         enterFullScreen();
@@ -326,6 +332,9 @@ void MainWindow::toggleFullScreen()
 
 void MainWindow::toggleProgressMode()
 {
+    if (m_compactMode != CompactMode::Normal) {
+        exitCompactMode();
+    }
     if (m_progressMode) {
         exitProgressMode();
     } else {
@@ -362,6 +371,24 @@ void MainWindow::togglePlaylist()
     positionPlayerChrome();
     positionPlaybackFeedback();
     updateCommandStates();
+}
+
+void MainWindow::toggleMusicMode()
+{
+    if (m_compactMode == CompactMode::Music) {
+        exitCompactMode();
+    } else {
+        enterCompactMode(CompactMode::Music);
+    }
+}
+
+void MainWindow::togglePictureInPicture()
+{
+    if (m_compactMode == CompactMode::PictureInPicture) {
+        exitCompactMode();
+    } else {
+        enterCompactMode(CompactMode::PictureInPicture);
+    }
 }
 
 void MainWindow::toggleMediaSettings()
@@ -542,6 +569,14 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
             mouseEvent->accept();
             return true;
         }
+        if (watched == m_videoSurface
+            && mouseEvent->button() == Qt::LeftButton
+            && m_compactMode == CompactMode::PictureInPicture
+            && windowHandle()) {
+            windowHandle()->startSystemMove();
+            mouseEvent->accept();
+            return true;
+        }
     }
     if (watched == m_videoSurface
         && event->type() == QEvent::MouseButtonDblClick) {
@@ -716,8 +751,43 @@ bool MainWindow::nativeEvent(
 {
 #ifdef Q_OS_WIN
     Q_UNUSED(eventType)
-    Q_UNUSED(result)
     const auto *nativeMessage = static_cast<MSG *>(message);
+    if (nativeMessage && result
+        && nativeMessage->message == WM_NCHITTEST
+        && m_compactMode == CompactMode::PictureInPicture) {
+        const int screenX =
+            static_cast<short>(LOWORD(nativeMessage->lParam));
+        const int screenY =
+            static_cast<short>(HIWORD(nativeMessage->lParam));
+        RECT frame{};
+        GetWindowRect(
+            reinterpret_cast<HWND>(winId()), &frame);
+        constexpr int resizeBorder = 8;
+        const bool left = screenX < frame.left + resizeBorder;
+        const bool right = screenX >= frame.right - resizeBorder;
+        const bool top = screenY < frame.top + resizeBorder;
+        const bool bottom = screenY >= frame.bottom - resizeBorder;
+        if (top && left) {
+            *result = HTTOPLEFT;
+        } else if (top && right) {
+            *result = HTTOPRIGHT;
+        } else if (bottom && left) {
+            *result = HTBOTTOMLEFT;
+        } else if (bottom && right) {
+            *result = HTBOTTOMRIGHT;
+        } else if (left) {
+            *result = HTLEFT;
+        } else if (right) {
+            *result = HTRIGHT;
+        } else if (top) {
+            *result = HTTOP;
+        } else if (bottom) {
+            *result = HTBOTTOM;
+        } else {
+            *result = HTCLIENT;
+        }
+        return true;
+    }
     if (nativeMessage && m_videoSurface && !m_progressMode) {
         if (nativeMessage->message == WM_ENTERSIZEMOVE) {
             m_videoSurface->setLiveResize(true);
@@ -846,14 +916,7 @@ void MainWindow::setupWindowChrome()
     connect(
         m_playerCore, &PlayerCore::bufferingChanged,
         this, [this](const BufferingInfo &buffering) {
-            m_bufferingIndicator->updateStatus(
-                buffering, m_playerCore->info().isSeeking);
-        });
-    connect(
-        m_playerCore, &PlayerCore::seekingChanged,
-        this, [this](bool seeking) {
-            m_bufferingIndicator->updateStatus(
-                m_playerCore->info().buffering, seeking);
+            m_bufferingIndicator->updateStatus(buffering);
         });
     connect(m_playerCore, &PlayerCore::playlistChanged,
             m_playlistPanel, &PlaylistPanel::setPlaylist);
@@ -1078,6 +1141,9 @@ void MainWindow::executeCommand(PlayerCommand command)
     case PlayerCommand::SavePlaylist:
         savePlaylist();
         break;
+    case PlayerCommand::NewPlayerWindow:
+        emit newPlayerRequested({});
+        break;
     case PlayerCommand::CloseWindow:
         close();
         break;
@@ -1154,11 +1220,18 @@ void MainWindow::executeCommand(PlayerCommand command)
         break;
     case PlayerCommand::ToggleAlwaysOnTop: {
         QAction *action = m_commandActions.value(command);
-        setWindowFlag(
-            Qt::WindowStaysOnTopHint, action && action->isChecked());
-        show();
+        m_alwaysOnTop = action && action->isChecked();
+        applyAlwaysOnTop(
+            m_alwaysOnTop
+            || m_compactMode == CompactMode::PictureInPicture);
         break;
     }
+    case PlayerCommand::ToggleMusicMode:
+        toggleMusicMode();
+        break;
+    case PlayerCommand::TogglePictureInPicture:
+        togglePictureInPicture();
+        break;
     case PlayerCommand::ToggleProgressMode:
         toggleProgressMode();
         break;
@@ -1368,23 +1441,45 @@ void MainWindow::updateCommandStates()
             m_commandActions.value(PlayerCommand::ToggleProgressMode)) {
         progress->setChecked(m_progressMode);
     }
+    if (QAction *music =
+            m_commandActions.value(PlayerCommand::ToggleMusicMode)) {
+        const bool active = m_compactMode == CompactMode::Music;
+        music->setChecked(active);
+        music->setText(
+            active ? tr("Exit Music Mode") : tr("Enter Music Mode"));
+        music->setEnabled(!m_progressMode);
+    }
+    if (QAction *pip =
+            m_commandActions.value(
+                PlayerCommand::TogglePictureInPicture)) {
+        const bool active =
+            m_compactMode == CompactMode::PictureInPicture;
+        pip->setChecked(active);
+        pip->setText(
+            active ? tr("Exit Picture in Picture")
+                   : tr("Enter Picture in Picture"));
+        pip->setEnabled(loaded && !m_progressMode);
+    }
     if (QAction *playlist =
             m_commandActions.value(PlayerCommand::TogglePlaylist)) {
         playlist->setChecked(
             m_playlistPanel && m_playlistPanel->isVisible());
-        playlist->setEnabled(!m_progressMode);
+        playlist->setEnabled(
+            !m_progressMode
+            && m_compactMode != CompactMode::PictureInPicture);
     }
     if (QAction *settings =
             m_commandActions.value(PlayerCommand::ToggleMediaSettings)) {
         settings->setChecked(
             m_mediaSettingsPanel
             && m_mediaSettingsPanel->isVisible());
-        settings->setEnabled(loaded && !m_progressMode);
+        settings->setEnabled(
+            loaded && !m_progressMode
+            && m_compactMode == CompactMode::Normal);
     }
     if (QAction *onTop =
             m_commandActions.value(PlayerCommand::ToggleAlwaysOnTop)) {
-        onTop->setChecked(windowFlags().testFlag(
-            Qt::WindowStaysOnTopHint));
+        onTop->setChecked(m_alwaysOnTop);
         onTop->setEnabled(!isFullScreenMode() && !m_progressMode);
     }
 }
@@ -1651,6 +1746,169 @@ void MainWindow::enterProgressMode()
     }
 }
 
+void MainWindow::enterCompactMode(CompactMode mode)
+{
+    if (mode == CompactMode::Normal || m_progressMode
+        || m_fullScreenState == FullScreenState::Entering
+        || m_fullScreenState == FullScreenState::Exiting) {
+        return;
+    }
+    if (m_compactMode == mode) {
+        return;
+    }
+    if (m_compactMode != CompactMode::Normal) {
+        exitCompactMode();
+        QTimer::singleShot(0, this, [this, mode] {
+            enterCompactMode(mode);
+        });
+        return;
+    }
+
+    m_pendingCompactMode = mode;
+    m_compactRestoreFullScreen = isFullScreenMode();
+    m_compactRestoreMaximized =
+        !m_compactRestoreFullScreen && isMaximized();
+    if (!m_compactRestoreFullScreen
+        && !m_compactRestoreMaximized) {
+        m_compactRestoreGeometry = geometry();
+    }
+    m_playlistWasVisibleBeforeCompact =
+        m_playlistPanel && m_playlistPanel->isVisible();
+    m_mediaSettingsWasVisibleBeforeCompact =
+        m_mediaSettingsPanel && m_mediaSettingsPanel->isVisible();
+
+    if (m_compactRestoreFullScreen) {
+        exitFullScreen();
+        QTimer::singleShot(
+            0, this, &MainWindow::finishEnteringCompactMode);
+    } else {
+        finishEnteringCompactMode();
+    }
+}
+
+void MainWindow::finishEnteringCompactMode()
+{
+    if (m_pendingCompactMode == CompactMode::Normal) {
+        return;
+    }
+    if (m_fullScreenState == FullScreenState::Entering
+        || m_fullScreenState == FullScreenState::Exiting) {
+        QTimer::singleShot(
+            0, this, &MainWindow::finishEnteringCompactMode);
+        return;
+    }
+
+    const CompactMode mode = m_pendingCompactMode;
+    m_pendingCompactMode = CompactMode::Normal;
+    m_compactMode = mode;
+    if (m_playlistPanel) {
+        m_playlistPanel->hide();
+    }
+    if (m_mediaSettingsPanel) {
+        m_mediaSettingsPanel->hide();
+    }
+
+    showNormal();
+    setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+    setMinimumSize(
+        mode == CompactMode::Music ? QSize(420, 150)
+                                   : QSize(280, 158));
+    Qt::WindowFlags flags = m_standardWindowFlags;
+    if (mode == CompactMode::PictureInPicture) {
+        flags |= Qt::FramelessWindowHint | Qt::Tool;
+    }
+    setWindowFlags(flags);
+
+    const QRect available = screen()
+        ? screen()->availableGeometry()
+        : QRect(0, 0, 1280, 720);
+    const QSize target =
+        mode == CompactMode::Music ? QSize(560, 210)
+                                   : QSize(480, 270);
+    const QPoint topRight(
+        available.right() - target.width() - 24,
+        available.bottom() - target.height() - 24);
+    setGeometry(QRect(topRight, target));
+    show();
+    raise();
+    activateWindow();
+    applyAlwaysOnTop(
+        m_alwaysOnTop
+        || mode == CompactMode::PictureInPicture);
+    positionPlayerChrome();
+    positionPlaybackFeedback();
+    revealPlayerChrome(false);
+    updateCommandStates();
+}
+
+void MainWindow::exitCompactMode()
+{
+    if (m_compactMode == CompactMode::Normal) {
+        return;
+    }
+
+    const bool restoreFullScreen = m_compactRestoreFullScreen;
+    const bool restoreMaximized = m_compactRestoreMaximized;
+    const QRect restoreGeometry = m_compactRestoreGeometry;
+    m_compactMode = CompactMode::Normal;
+    m_pendingCompactMode = CompactMode::Normal;
+    m_compactRestoreFullScreen = false;
+    m_compactRestoreMaximized = false;
+
+    setWindowFlags(m_standardWindowFlags);
+    setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+    setMinimumSize(480, 270);
+    showNormal();
+    if (restoreGeometry.isValid()) {
+        setGeometry(restoreGeometry);
+    }
+    if (m_playlistWasVisibleBeforeCompact && m_playlistPanel) {
+        m_playlistPanel->show();
+    }
+    if (m_mediaSettingsWasVisibleBeforeCompact
+        && m_mediaSettingsPanel) {
+        m_mediaSettingsPanel->show();
+    }
+    m_playlistWasVisibleBeforeCompact = false;
+    m_mediaSettingsWasVisibleBeforeCompact = false;
+    applyAlwaysOnTop(m_alwaysOnTop);
+    show();
+
+    if (restoreFullScreen) {
+        m_fullScreenState = FullScreenState::Windowed;
+        enterFullScreen();
+    } else if (restoreMaximized) {
+        showMaximized();
+    }
+    positionPlayerChrome();
+    positionPlaybackFeedback();
+    revealPlayerChrome(false);
+    updateCommandStates();
+}
+
+void MainWindow::applyAlwaysOnTop(bool enabled)
+{
+    if (m_playerCore && m_playerCore->mpvCore()
+        && m_playerCore->info().state != PlayerState::ShutDown) {
+        m_playerCore->mpvCore()->setFlag(
+            QStringLiteral("ontop"), enabled);
+    }
+#ifdef Q_OS_WIN
+    const HWND handle = reinterpret_cast<HWND>(winId());
+    SetWindowPos(
+        handle, enabled ? HWND_TOPMOST : HWND_NOTOPMOST,
+        0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE
+            | SWP_NOOWNERZORDER);
+#else
+    const bool wasVisible = isVisible();
+    setWindowFlag(Qt::WindowStaysOnTopHint, enabled);
+    if (wasVisible) {
+        show();
+    }
+#endif
+}
+
 void MainWindow::finishEnteringProgressMode()
 {
     if (!m_progressMode) {
@@ -1764,8 +2022,7 @@ void MainWindow::exitProgressMode()
     m_videoSurface->update();
     positionPlaybackFeedback();
     m_bufferingIndicator->updateStatus(
-        m_playerCore->info().buffering,
-        m_playerCore->info().isSeeking);
+        m_playerCore->info().buffering);
     revealPlayerChrome(false);
 }
 

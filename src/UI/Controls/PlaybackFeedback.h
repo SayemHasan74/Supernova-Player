@@ -53,8 +53,7 @@ class BufferingIndicator final : public QWidget {
 public:
     explicit BufferingIndicator(QWidget *parent = nullptr);
 
-    void updateStatus(
-        const BufferingInfo &buffering, bool seeking);
+    void updateStatus(const BufferingInfo &buffering);
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -63,7 +62,6 @@ private:
     static QString formatBytes(qint64 bytes);
 
     BufferingInfo m_buffering;
-    bool m_seeking = false;
     int m_spinnerAngle = 0;
     QTimer *m_spinnerTimer = nullptr;
 };

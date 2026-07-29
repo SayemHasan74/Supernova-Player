@@ -182,12 +182,10 @@ BufferingIndicator::BufferingIndicator(QWidget *parent)
 }
 
 void BufferingIndicator::updateStatus(
-    const BufferingInfo &buffering, bool seeking)
+    const BufferingInfo &buffering)
 {
     m_buffering = buffering;
-    m_seeking = seeking;
-    const bool visible = buffering.active || seeking;
-    if (visible) {
+    if (buffering.active) {
         if (!m_spinnerTimer->isActive()) {
             m_spinnerTimer->start();
         }
@@ -223,9 +221,8 @@ void BufferingIndicator::paintEvent(QPaintEvent *event)
     titleFont.setWeight(QFont::DemiBold);
     painter.setFont(titleFont);
     painter.setPen(primaryText);
-    const QString title = m_buffering.active
-        ? tr("Buffering… %1%").arg(m_buffering.percent)
-        : tr("Seeking…");
+    const QString title =
+        tr("Buffering… %1%").arg(m_buffering.percent);
     painter.drawText(
         QRect(51, 14, width() - 63, 28),
         Qt::AlignLeft | Qt::AlignVCenter, title);

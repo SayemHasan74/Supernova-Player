@@ -15,6 +15,9 @@ const QList<PlayerCommandDefinition> &playerCommandDefinitions()
         {PlayerCommand::SavePlaylist, PlayerMenu::File,
          QStringLiteral("Save Playlist…"),
          {QStringLiteral("Ctrl+Shift+S")}, true},
+        {PlayerCommand::NewPlayerWindow, PlayerMenu::File,
+         QStringLiteral("New Player Window"),
+         {QStringLiteral("Ctrl+N")}},
         {PlayerCommand::CloseWindow, PlayerMenu::File, QStringLiteral("Close Window"),
          {QStringLiteral("Ctrl+W")}},
         {PlayerCommand::QuitApplication, PlayerMenu::File, QStringLiteral("Quit"),
@@ -77,6 +80,12 @@ const QList<PlayerCommandDefinition> &playerCommandDefinitions()
         {PlayerCommand::ToggleAlwaysOnTop, PlayerMenu::Window,
          QStringLiteral("Always on Top"),
          {QStringLiteral("Ctrl+T")}, false, true},
+        {PlayerCommand::ToggleMusicMode, PlayerMenu::Window,
+         QStringLiteral("Enter Music Mode"),
+         {QStringLiteral("Ctrl+Shift+M")}, false, true},
+        {PlayerCommand::TogglePictureInPicture, PlayerMenu::Window,
+         QStringLiteral("Enter Picture in Picture"),
+         {QStringLiteral("Ctrl+Alt+P")}, true, true},
         {PlayerCommand::ToggleProgressMode, PlayerMenu::Window,
          QStringLiteral("Progress-Only Mode"), {}, false, true},
         {PlayerCommand::TogglePlaylist, PlayerMenu::Window,
@@ -108,6 +117,7 @@ QString playerCommandIdentifier(PlayerCommand command)
     case PlayerCommand::OpenFolder: return QStringLiteral("OpenFolder");
     case PlayerCommand::ImportPlaylist: return QStringLiteral("ImportPlaylist");
     case PlayerCommand::SavePlaylist: return QStringLiteral("SavePlaylist");
+    case PlayerCommand::NewPlayerWindow: return QStringLiteral("NewPlayerWindow");
     case PlayerCommand::CloseWindow: return QStringLiteral("CloseWindow");
     case PlayerCommand::QuitApplication: return QStringLiteral("QuitApplication");
     case PlayerCommand::TogglePause: return QStringLiteral("TogglePause");
@@ -135,6 +145,9 @@ QString playerCommandIdentifier(PlayerCommand command)
         return QStringLiteral("FindOnlineSubtitles");
     case PlayerCommand::ToggleFullScreen: return QStringLiteral("ToggleFullScreen");
     case PlayerCommand::ToggleAlwaysOnTop: return QStringLiteral("ToggleAlwaysOnTop");
+    case PlayerCommand::ToggleMusicMode: return QStringLiteral("ToggleMusicMode");
+    case PlayerCommand::TogglePictureInPicture:
+        return QStringLiteral("TogglePictureInPicture");
     case PlayerCommand::ToggleProgressMode: return QStringLiteral("ToggleProgressMode");
     case PlayerCommand::TogglePlaylist: return QStringLiteral("TogglePlaylist");
     case PlayerCommand::ToggleMediaSettings: return QStringLiteral("ToggleMediaSettings");

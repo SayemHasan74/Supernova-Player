@@ -52,10 +52,13 @@ public slots:
     void pauseAndMinimize();
     void togglePlaylist();
     void toggleMediaSettings();
+    void toggleMusicMode();
+    void togglePictureInPicture();
 
 signals:
     void renderContextReady();
     void openUrlsRequested(const QList<QUrl> &urls);
+    void newPlayerRequested(const QList<QUrl> &urls);
     void fullScreenChanged(bool fullScreen);
 
 protected:
@@ -76,6 +79,11 @@ private:
         FullScreen,
         Exiting,
     };
+    enum class CompactMode {
+        Normal,
+        Music,
+        PictureInPicture,
+    };
 
     void beginShutdown();
     void applyDarkWindowFrame();
@@ -85,6 +93,10 @@ private:
     void exitFullScreen();
     void exitProgressMode();
     void finishEnteringProgressMode();
+    void enterCompactMode(CompactMode mode);
+    void exitCompactMode();
+    void finishEnteringCompactMode();
+    void applyAlwaysOnTop(bool enabled);
     void executeCommand(PlayerCommand command);
     bool handleConfiguredKeyPress(QKeyEvent *event);
     void reloadKeyBindings();
@@ -139,8 +151,11 @@ private:
     QString m_lastOpenDirectory;
     QByteArray m_windowedGeometry;
     QRect m_progressRestoreGeometry;
+    QRect m_compactRestoreGeometry;
     Qt::WindowFlags m_standardWindowFlags;
     FullScreenState m_fullScreenState = FullScreenState::Windowed;
+    CompactMode m_compactMode = CompactMode::Normal;
+    CompactMode m_pendingCompactMode = CompactMode::Normal;
     bool m_windowedWasMaximized = false;
     bool m_progressMode = false;
     bool m_progressRestoreFullScreen = false;
@@ -152,5 +167,10 @@ private:
     bool m_ignoreNextLeftRelease = false;
     bool m_playlistWasVisibleBeforeProgress = false;
     bool m_mediaSettingsWasVisibleBeforeProgress = false;
+    bool m_compactRestoreFullScreen = false;
+    bool m_compactRestoreMaximized = false;
+    bool m_playlistWasVisibleBeforeCompact = false;
+    bool m_mediaSettingsWasVisibleBeforeCompact = false;
+    bool m_alwaysOnTop = false;
     bool m_applicationEventFilterInstalled = false;
 };
