@@ -338,10 +338,16 @@ void MainWindow::toggleFullScreen()
     if (m_progressMode) {
         return;
     }
-    if (m_compactMode != CompactMode::Normal) {
+    if (m_compactMode != CompactMode::Normal
+        && m_compactMode != CompactMode::Music) {
         exitCompactMode();
         QTimer::singleShot(0, this, &MainWindow::toggleFullScreen);
         return;
+    }
+    if (m_compactMode == CompactMode::Music
+        && m_fullScreenState == FullScreenState::Windowed) {
+        setMinimumSize(0, 0);
+        setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
     }
     switch (m_fullScreenState) {
     case FullScreenState::Windowed:
@@ -360,6 +366,9 @@ void MainWindow::toggleFullScreen()
 
 void MainWindow::toggleProgressMode()
 {
+    if (m_compactMode == CompactMode::Music) {
+        return;
+    }
     if (m_compactMode != CompactMode::Normal) {
         exitCompactMode();
     }
@@ -424,6 +433,10 @@ void MainWindow::toggleMusicMode()
 {
     m_musicModeAutomatic = false;
     if (m_compactMode == CompactMode::Music) {
+        if (m_playerCore->info().hasAudio
+            && !m_playerCore->info().hasVideo) {
+            return;
+        }
         exitCompactMode();
     } else {
         enterCompactMode(CompactMode::Music);
@@ -432,6 +445,11 @@ void MainWindow::toggleMusicMode()
 
 void MainWindow::togglePictureInPicture()
 {
+    if (m_compactMode == CompactMode::Music
+        && m_playerCore->info().hasAudio
+        && !m_playerCore->info().hasVideo) {
+        return;
+    }
     if (m_compactMode == CompactMode::PictureInPicture) {
         exitCompactMode();
     } else {
@@ -805,7 +823,9 @@ bool MainWindow::nativeEvent(
             static_cast<short>(HIWORD(nativeMessage->lParam));
         if (m_compactMode == CompactMode::Music) {
             const QPoint global(screenX, screenY);
-            *result = m_musicModeView
+            *result = isFullScreenMode()
+                ? HTCLIENT
+                : m_musicModeView
                     && m_musicModeView->isInteractiveAt(global)
                 ? HTCLIENT : HTCAPTION;
             return true;
@@ -874,7 +894,8 @@ bool MainWindow::nativeEvent(
         return true;
     }
     if (nativeMessage
-        && m_compactMode == CompactMode::PictureInPicture
+        && (m_compactMode == CompactMode::PictureInPicture
+            || m_compactMode == CompactMode::Music)
         && nativeMessage->message == WM_NCLBUTTONDBLCLK) {
         QTimer::singleShot(0, this, &MainWindow::toggleFullScreen);
         if (result) {
@@ -1119,12 +1140,12 @@ void MainWindow::setupWindowChrome()
 
     m_progressBar = new ProgressOnlyBar(contentRoot);
     m_musicModeView = new MusicModeView(m_playerCore, contentRoot);
-    connect(m_musicModeView, &MusicModeView::backRequested,
-            this, &MainWindow::toggleMusicMode);
     connect(m_musicModeView, &MusicModeView::closeRequested,
             this, &MainWindow::close);
     connect(m_musicModeView, &MusicModeView::playlistRequested,
             this, &MainWindow::togglePlaylist);
+    connect(m_musicModeView, &MusicModeView::fullScreenRequested,
+            this, &MainWindow::toggleFullScreen);
     connect(m_musicModeView, &MusicModeView::preferredSizeChanged,
             this, &MainWindow::resizeMusicModeWindow);
     m_welcomeView = new WelcomeView(contentRoot);
@@ -2222,6 +2243,9 @@ void MainWindow::completeFullScreenTransition(bool fullScreen)
         ? FullScreenState::FullScreen
         : FullScreenState::Windowed;
     syncFullScreenUi();
+    if (!fullScreen && m_compactMode == CompactMode::Music) {
+        resizeMusicModeWindow();
+    }
     if (m_videoSurface) {
         m_videoSurface->setFocus(Qt::OtherFocusReason);
         m_videoSurface->update();
@@ -2268,6 +2292,9 @@ void MainWindow::syncFullScreenUi()
         m_playerChrome->setFullScreen(fullScreen);
         positionPlayerChrome();
         revealPlayerChrome(false);
+    }
+    if (m_musicModeView) {
+        m_musicModeView->setFullScreen(fullScreen);
     }
     updateCommandStates();
 }

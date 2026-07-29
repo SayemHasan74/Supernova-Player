@@ -21,7 +21,6 @@
 #include <QPainterPath>
 #include <QPropertyAnimation>
 #include <QResizeEvent>
-#include <QSettings>
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QTimer>
@@ -33,8 +32,7 @@
 namespace {
 constexpr int baseMusicWidth = 688;
 constexpr int baseMusicHeight = 520;
-constexpr int compactMusicHeight = 230;
-constexpr int playlistWidth = 360;
+constexpr int playlistWidth = 300;
 constexpr int hoverFadeMs = 200;
 
 quint32 synchsafe(const uchar *value)
@@ -200,20 +198,20 @@ MusicModeView::MusicModeView(PlayerCore *playerCore, QWidget *parent)
     m_playlistButton =
         new IinaIconButton(IinaIcon::Playlist, m_controlsView);
     m_artworkButton =
-        new IinaIconButton(IinaIcon::AlbumArt, m_controlsView);
+        new IinaIconButton(IinaIcon::FullScreen, m_controlsView);
     m_shuffleButton =
         new IinaIconButton(IinaIcon::Shuffle, m_controlsView);
     m_repeatButton =
         new IinaIconButton(IinaIcon::Repeat, m_controlsView);
 
     m_closeButton->setToolTip(tr("Close Player"));
-    m_backButton->setToolTip(tr("Return to Video Window"));
+    m_backButton->hide();
     m_volumeButton->setToolTip(tr("Volume"));
     m_previousButton->setToolTip(tr("Previous Media"));
     m_playButton->setToolTip(tr("Play"));
     m_nextButton->setToolTip(tr("Next Media"));
     m_playlistButton->setToolTip(tr("Show Playlist"));
-    m_artworkButton->setToolTip(tr("Hide Album Art"));
+    m_artworkButton->setToolTip(tr("Enter Full Screen"));
     m_shuffleButton->setToolTip(tr("Shuffle Playlist"));
     m_repeatButton->setToolTip(tr("Change Repeat Mode"));
 
@@ -270,12 +268,10 @@ MusicModeView::MusicModeView(PlayerCore *playerCore, QWidget *parent)
 
     connect(m_closeButton, &QAbstractButton::clicked,
             this, &MusicModeView::closeRequested);
-    connect(m_backButton, &QAbstractButton::clicked,
-            this, &MusicModeView::backRequested);
     connect(m_playlistButton, &QAbstractButton::clicked,
             this, &MusicModeView::playlistRequested);
     connect(m_artworkButton, &QAbstractButton::clicked,
-            this, [this] { setArtworkVisible(!m_showArtwork); });
+            this, &MusicModeView::fullScreenRequested);
     connect(m_shuffleButton, &QAbstractButton::clicked,
             m_playerCore, &PlayerCore::shufflePlaylist);
     connect(m_repeatButton, &QAbstractButton::clicked,
@@ -369,8 +365,7 @@ MusicModeView::MusicModeView(PlayerCore *playerCore, QWidget *parent)
                 }
             });
 
-    m_showArtwork = QSettings().value(
-        QStringLiteral("window/musicShowArtwork"), true).toBool();
+    m_showArtwork = true;
     refresh();
 }
 
@@ -384,7 +379,8 @@ void MusicModeView::attachPlaylistPanel(PlaylistPanel *panel)
         m_playlistPanel->setParent(this);
         m_playlistPanel->hide();
         m_playlistPanel->setGeometry(
-            baseMusicWidth, 0, playlistWidth, height());
+            std::max(0, width() - playlistWidth),
+            0, playlistWidth, height());
     }
 }
 
@@ -408,7 +404,7 @@ void MusicModeView::setPlaylistVisible(bool visible)
     m_playlistPanel->setVisible(visible);
     m_playlistButton->setToolTip(
         visible ? tr("Hide Playlist") : tr("Show Playlist"));
-    emit preferredSizeChanged();
+    resizeEvent(nullptr);
 }
 
 bool MusicModeView::isPlaylistVisible() const noexcept
@@ -423,9 +419,17 @@ bool MusicModeView::isArtworkVisible() const noexcept
 
 QSize MusicModeView::preferredSize() const
 {
-    return QSize(
-        baseMusicWidth + (m_showPlaylist ? playlistWidth : 0),
-        m_showArtwork ? baseMusicHeight : compactMusicHeight);
+    return QSize(baseMusicWidth, baseMusicHeight);
+}
+
+void MusicModeView::setFullScreen(bool fullScreen)
+{
+    m_artworkButton->setIconType(
+        fullScreen ? IinaIcon::ExitFullScreen
+                   : IinaIcon::FullScreen);
+    m_artworkButton->setToolTip(
+        fullScreen ? tr("Exit Full Screen")
+                   : tr("Enter Full Screen"));
 }
 
 bool MusicModeView::isInteractiveAt(const QPoint &globalPosition) const
@@ -434,6 +438,7 @@ bool MusicModeView::isInteractiveAt(const QPoint &globalPosition) const
     while (child && child != this) {
         if (qobject_cast<QAbstractButton *>(child)
             || qobject_cast<QSlider *>(child)
+            || child == m_timeline
             || (m_playlistPanel
                 && (child == m_playlistPanel
                     || m_playlistPanel->isAncestorOf(child)))) {
@@ -493,7 +498,7 @@ void MusicModeView::paintEvent(QPaintEvent *event)
     painter.setClipPath(windowPath);
     painter.fillRect(rect(), QColor(18, 18, 20, 246));
 
-    const QRect baseRect(0, 0, baseMusicWidth, height());
+    const QRect baseRect = rect();
     if (!m_artwork.isNull()) {
         painter.setOpacity(0.22);
         painter.drawImage(
@@ -505,8 +510,21 @@ void MusicModeView::paintEvent(QPaintEvent *event)
         painter.fillRect(baseRect, QColor(15, 13, 19, 142));
     }
     if (m_showArtwork) {
+        const int contentWidth =
+            m_showPlaylist ? std::max(300, width() - playlistWidth)
+                           : width();
+        const int artSize =
+            width() <= baseMusicWidth && height() <= baseMusicHeight
+            ? 220
+            : std::clamp(
+                  std::min(contentWidth * 36 / 100,
+                           height() * 46 / 100),
+                  220, 420);
+        const int artTop =
+            std::max(42, (height() - artSize - 205) / 2);
         const QRect artRect(
-            (baseMusicWidth - 220) / 2, 62, 220, 220);
+            (contentWidth - artSize) / 2,
+            artTop, artSize, artSize);
         if (!m_artwork.isNull()) {
             painter.drawImage(
                 artRect,
@@ -545,7 +563,7 @@ void MusicModeView::paintEvent(QPaintEvent *event)
     }
 
     const QRect controlsRect(
-        0, height() - 58, baseMusicWidth, 58);
+        0, height() - 58, width(), 58);
     painter.fillRect(controlsRect, QColor(18, 18, 21, 115));
     painter.setPen(QColor(255, 255, 255, 32));
     painter.drawLine(
@@ -558,34 +576,61 @@ void MusicModeView::paintEvent(QPaintEvent *event)
 
 void MusicModeView::resizeEvent(QResizeEvent *event)
 {
-    QWidget::resizeEvent(event);
-    const int metadataY = m_showArtwork ? 295 : 42;
-    m_infoView->setGeometry(80, metadataY, baseMusicWidth - 160, 104);
+    if (event) {
+        QWidget::resizeEvent(event);
+    }
+    const int contentWidth =
+        m_showPlaylist ? std::max(300, width() - playlistWidth)
+                       : width();
+    const int artSize =
+        width() <= baseMusicWidth && height() <= baseMusicHeight
+        ? 220
+        : std::clamp(
+              std::min(contentWidth * 36 / 100,
+                       height() * 46 / 100),
+              220, 420);
+    const int artTop =
+        std::max(42, (height() - artSize - 205) / 2);
+    const int metadataY = artTop + artSize + 13;
+    const int infoWidth = std::max(260, contentWidth - 160);
+    m_infoView->setGeometry(
+        std::max(20, (contentWidth - infoWidth) / 2),
+        metadataY, infoWidth, 104);
     m_titleLabel->setGeometry(0, 0, m_infoView->width(), 30);
     m_artistAlbumLabel->setGeometry(0, 31, m_infoView->width(), 24);
     m_genreLabel->setGeometry(0, 56, m_infoView->width(), 22);
-    m_controlsView->setGeometry(0, 0, baseMusicWidth, height());
+    m_controlsView->setGeometry(0, 0, width(), height());
 
     m_closeButton->setGeometry(12, 10, 24, 24);
-    m_backButton->setGeometry(40, 10, 24, 24);
+    m_backButton->hide();
     m_volumeButton->setGeometry(12, height() - 50, 26, 26);
     m_volumeSlider->setGeometry(42, height() - 42, 82, 16);
-    m_shuffleButton->setGeometry(258, height() - 48, 28, 28);
-    m_previousButton->setGeometry(292, height() - 50, 30, 30);
-    m_playButton->setGeometry(330, height() - 56, 40, 40);
-    m_nextButton->setGeometry(378, height() - 50, 30, 30);
-    m_repeatButton->setGeometry(414, height() - 48, 28, 28);
-    m_artworkButton->setGeometry(614, height() - 48, 28, 28);
-    m_playlistButton->setGeometry(648, height() - 48, 28, 28);
+    const int center = contentWidth / 2;
+    m_shuffleButton->setGeometry(
+        center - 86, height() - 48, 28, 28);
+    m_previousButton->setGeometry(
+        center - 52, height() - 50, 30, 30);
+    m_playButton->setGeometry(
+        center - 14, height() - 56, 40, 40);
+    m_nextButton->setGeometry(
+        center + 34, height() - 50, 30, 30);
+    m_repeatButton->setGeometry(
+        center + 70, height() - 48, 28, 28);
+    m_artworkButton->setGeometry(
+        contentWidth - 74, height() - 48, 28, 28);
+    m_playlistButton->setGeometry(
+        contentWidth - 40, height() - 48, 28, 28);
 
     const int timelineY = height() - 92;
     m_elapsedLabel->setGeometry(8, timelineY, 38, 16);
-    m_timeline->setGeometry(48, timelineY, baseMusicWidth - 96, 16);
+    m_timeline->setGeometry(
+        48, timelineY, std::max(100, contentWidth - 96), 16);
     m_durationLabel->setGeometry(
-        baseMusicWidth - 46, timelineY, 38, 16);
+        contentWidth - 46, timelineY, 38, 16);
     if (m_playlistPanel) {
         m_playlistPanel->setGeometry(
-            baseMusicWidth, 0, playlistWidth, height());
+            std::max(0, width() - playlistWidth),
+            0, playlistWidth, height());
         if (m_showPlaylist) {
             m_playlistPanel->raise();
         }
@@ -617,19 +662,6 @@ void MusicModeView::setControlsVisible(bool visible, bool animated)
     m_infoOpacity->setOpacity(1.0);
     m_controlsOpacity->setOpacity(1.0);
     m_controlsView->setEnabled(true);
-}
-
-void MusicModeView::setArtworkVisible(bool visible)
-{
-    if (m_showArtwork == visible) {
-        return;
-    }
-    m_showArtwork = visible;
-    QSettings().setValue(
-        QStringLiteral("window/musicShowArtwork"), visible);
-    m_artworkButton->setToolTip(
-        visible ? tr("Hide Album Art") : tr("Show Album Art"));
-    emit preferredSizeChanged();
 }
 
 void MusicModeView::updateMetadata()

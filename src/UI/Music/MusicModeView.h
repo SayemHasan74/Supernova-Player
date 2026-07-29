@@ -27,6 +27,7 @@ public:
     [[nodiscard]] bool isPlaylistVisible() const noexcept;
     [[nodiscard]] bool isArtworkVisible() const noexcept;
     [[nodiscard]] QSize preferredSize() const;
+    void setFullScreen(bool fullScreen);
     [[nodiscard]] bool isInteractiveAt(
         const QPoint &globalPosition) const;
     void nativePointerMoved();
@@ -36,6 +37,7 @@ signals:
     void backRequested();
     void closeRequested();
     void playlistRequested();
+    void fullScreenRequested();
     void preferredSizeChanged();
     void previewRequested(double seconds, const QPoint &globalAnchor);
     void previewDismissed();
@@ -49,7 +51,6 @@ protected:
 
 private:
     void setControlsVisible(bool visible, bool animated = true);
-    void setArtworkVisible(bool visible);
     void updateMetadata();
     void updatePlaybackState();
     void updateTimeLabels();
