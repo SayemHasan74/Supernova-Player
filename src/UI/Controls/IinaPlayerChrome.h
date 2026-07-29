@@ -28,6 +28,11 @@ enum class IinaIcon {
     PictureInPicture,
     FullScreen,
     ExitFullScreen,
+    Close,
+    Back,
+    AlbumArt,
+    Shuffle,
+    Repeat,
 };
 
 class IinaIconButton final : public QAbstractButton {

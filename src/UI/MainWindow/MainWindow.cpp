@@ -15,6 +15,7 @@
 #include "UI/Preferences/PreferencesDialog.h"
 #include "UI/Inspector/MediaInspector.h"
 #include "UI/Subtitles/OnlineSubtitleDialog.h"
+#include "UI/Music/MusicModeView.h"
 #include "UI/Design/DesignTokens.h"
 
 #include <QAction>
@@ -254,6 +255,10 @@ MainWindow::MainWindow(PlayerCore *playerCore, QWidget *parent)
     connect(m_playerCore, &PlayerCore::playbackError,
             this, [this](const QString &message, bool recoverable) {
                 setToolTip(message);
+                if (recoverable
+                    && isLoaded(m_playerCore->info().state)) {
+                    return;
+                }
                 setWindowTitle(
                     recoverable
                         ? tr("Playback Error — Supernova")
@@ -261,6 +266,15 @@ MainWindow::MainWindow(PlayerCore *playerCore, QWidget *parent)
             });
     connect(m_playerCore, &PlayerCore::mediaLoaded,
             this, [this] {
+                const QUrl url = m_playerCore->info().currentUrl;
+                QString mediaName = url.fileName();
+                if (mediaName.isEmpty()) {
+                    mediaName = url.host();
+                }
+                if (!mediaName.isEmpty()) {
+                    setWindowTitle(
+                        tr("%1 — Supernova").arg(mediaName));
+                }
                 showPlaybackView();
                 updateCommandStates();
                 revealPlayerChrome(false);
@@ -370,6 +384,20 @@ void MainWindow::togglePlaylist()
     if (!m_playlistPanel || m_progressMode) {
         return;
     }
+    if (m_compactMode == CompactMode::Music && m_musicModeView) {
+        m_musicModeView->setPlaylistVisible(
+            !m_musicModeView->isPlaylistVisible());
+        m_playlistPanel->setPlaylist(m_playerCore->info().playlist);
+        m_playlistPanel->setHistory(m_playerCore->history());
+        m_playlistPanel->setChapters(
+            m_playerCore->info().chapters,
+            m_playerCore->info().currentChapter);
+        if (m_musicModeView->isPlaylistVisible()) {
+            m_playlistPanel->raise();
+        }
+        updateCommandStates();
+        return;
+    }
     m_playlistPanel->setVisible(!m_playlistPanel->isVisible());
     if (m_playlistPanel->isVisible()) {
         if (m_mediaSettingsPanel) {
@@ -385,6 +413,11 @@ void MainWindow::togglePlaylist()
     positionPlayerChrome();
     positionPlaybackFeedback();
     updateCommandStates();
+}
+
+void MainWindow::prepareForInitialMedia()
+{
+    showPlaybackView();
 }
 
 void MainWindow::toggleMusicMode()
@@ -531,6 +564,9 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         && (watchedWidget == m_playbackPage
             || watchedWidget == m_videoSurface
             || watchedWidget == m_playerChrome
+            || watchedWidget == m_musicModeView
+            || (m_musicModeView
+                && m_musicModeView->isAncestorOf(watchedWidget))
             || (m_playbackPage
                 && m_playbackPage->isAncestorOf(watchedWidget)));
     const bool isPlaylistUi =
@@ -761,11 +797,19 @@ bool MainWindow::nativeEvent(
     const auto *nativeMessage = static_cast<MSG *>(message);
     if (nativeMessage && result
         && nativeMessage->message == WM_NCHITTEST
-        && m_compactMode == CompactMode::PictureInPicture) {
+        && (m_compactMode == CompactMode::PictureInPicture
+            || m_compactMode == CompactMode::Music)) {
         const int screenX =
             static_cast<short>(LOWORD(nativeMessage->lParam));
         const int screenY =
             static_cast<short>(HIWORD(nativeMessage->lParam));
+        if (m_compactMode == CompactMode::Music) {
+            const QPoint global(screenX, screenY);
+            *result = m_musicModeView
+                    && m_musicModeView->isInteractiveAt(global)
+                ? HTCLIENT : HTCAPTION;
+            return true;
+        }
         RECT frame{};
         GetWindowRect(
             reinterpret_cast<HWND>(winId()), &frame);
@@ -809,7 +853,14 @@ bool MainWindow::nativeEvent(
         revealPlayerChrome();
     }
     if (nativeMessage
-        && m_compactMode == CompactMode::PictureInPicture
+        && m_compactMode == CompactMode::Music
+        && nativeMessage->message == WM_NCMOUSEMOVE
+        && m_musicModeView) {
+        m_musicModeView->nativePointerMoved();
+    }
+    if (nativeMessage
+        && (m_compactMode == CompactMode::PictureInPicture
+            || m_compactMode == CompactMode::Music)
         && nativeMessage->message == WM_NCRBUTTONUP) {
         const QPoint global(
             static_cast<short>(LOWORD(nativeMessage->lParam)),
@@ -867,6 +918,9 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
 void MainWindow::resizeEvent(QResizeEvent *event)
 {
     QMainWindow::resizeEvent(event);
+    if (m_compactMode == CompactMode::Music) {
+        return;
+    }
     positionPlayerChrome();
     positionPlaybackFeedback();
 }
@@ -1064,6 +1118,15 @@ void MainWindow::setupWindowChrome()
     });
 
     m_progressBar = new ProgressOnlyBar(contentRoot);
+    m_musicModeView = new MusicModeView(m_playerCore, contentRoot);
+    connect(m_musicModeView, &MusicModeView::backRequested,
+            this, &MainWindow::toggleMusicMode);
+    connect(m_musicModeView, &MusicModeView::closeRequested,
+            this, &MainWindow::close);
+    connect(m_musicModeView, &MusicModeView::playlistRequested,
+            this, &MainWindow::togglePlaylist);
+    connect(m_musicModeView, &MusicModeView::preferredSizeChanged,
+            this, &MainWindow::resizeMusicModeWindow);
     m_welcomeView = new WelcomeView(contentRoot);
     m_welcomeView->setHistory(m_playerCore->history());
     m_welcomeView->setRecentMedia(m_playerCore->recentMedia());
@@ -1082,6 +1145,7 @@ void MainWindow::setupWindowChrome()
     connect(m_playerCore, &PlayerCore::recentMediaChanged,
             m_welcomeView, &WelcomeView::setRecentMedia);
     m_contentLayout->addWidget(m_playbackPage);
+    m_contentLayout->addWidget(m_musicModeView);
     m_contentLayout->addWidget(m_progressBar);
     m_contentLayout->addWidget(m_welcomeView);
     m_contentLayout->setCurrentWidget(m_welcomeView);
@@ -1699,6 +1763,11 @@ void MainWindow::showPlaybackView()
     if (!m_contentLayout || !m_playbackPage || m_progressMode) {
         return;
     }
+    if (m_compactMode == CompactMode::Music && m_musicModeView) {
+        m_musicModeView->refresh();
+        m_contentLayout->setCurrentWidget(m_musicModeView);
+        return;
+    }
     const bool leavingWelcome =
         m_welcomeView
         && m_contentLayout->currentWidget() == m_welcomeView;
@@ -1865,15 +1934,25 @@ void MainWindow::finishEnteringCompactMode()
     if (m_mediaSettingsPanel) {
         m_mediaSettingsPanel->hide();
     }
+    if (mode == CompactMode::Music && m_musicModeView) {
+        m_musicModeView->attachPlaylistPanel(m_playlistPanel);
+        m_musicModeView->setPlaylistVisible(false);
+        m_musicModeView->refresh();
+        m_contentLayout->setCurrentWidget(m_musicModeView);
+    }
 
     showNormal();
     setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
     setMinimumSize(
-        mode == CompactMode::Music ? QSize(420, 150)
+        mode == CompactMode::Music && m_musicModeView
+            ? m_musicModeView->preferredSize()
                                    : QSize(280, 158));
     Qt::WindowFlags flags = m_standardWindowFlags;
     if (mode == CompactMode::PictureInPicture) {
         flags |= Qt::FramelessWindowHint | Qt::Tool;
+    } else if (mode == CompactMode::Music) {
+        setAttribute(Qt::WA_TranslucentBackground, true);
+        flags |= Qt::FramelessWindowHint;
     }
     setWindowFlags(flags);
 
@@ -1881,21 +1960,28 @@ void MainWindow::finishEnteringCompactMode()
         ? screen()->availableGeometry()
         : QRect(0, 0, 1280, 720);
     const QSize target =
-        mode == CompactMode::Music ? QSize(560, 210)
-                                   : QSize(480, 270);
+        mode == CompactMode::Music && m_musicModeView
+            ? m_musicModeView->preferredSize()
+            : QSize(480, 270);
     const QPoint topRight(
         available.right() - target.width() - 24,
         available.bottom() - target.height() - 24);
     setGeometry(QRect(topRight, target));
+    if (mode == CompactMode::Music) {
+        setMinimumSize(target);
+        setMaximumSize(target);
+    }
     show();
     raise();
     activateWindow();
     applyAlwaysOnTop(
         m_alwaysOnTop
         || mode == CompactMode::PictureInPicture);
-    positionPlayerChrome();
-    positionPlaybackFeedback();
-    revealPlayerChrome(false);
+    if (mode == CompactMode::PictureInPicture) {
+        positionPlayerChrome();
+        positionPlaybackFeedback();
+        revealPlayerChrome(false);
+    }
     updateCommandStates();
 }
 
@@ -1908,11 +1994,18 @@ void MainWindow::exitCompactMode()
     const bool restoreFullScreen = m_compactRestoreFullScreen;
     const bool restoreMaximized = m_compactRestoreMaximized;
     const QRect restoreGeometry = m_compactRestoreGeometry;
+    const CompactMode previousMode = m_compactMode;
     m_compactMode = CompactMode::Normal;
     m_playerChrome->setPictureInPicture(false);
     m_pendingCompactMode = CompactMode::Normal;
     m_compactRestoreFullScreen = false;
     m_compactRestoreMaximized = false;
+
+    if (previousMode == CompactMode::Music && m_musicModeView) {
+        m_musicModeView->detachPlaylistPanel(m_playbackPage);
+        m_contentLayout->setCurrentWidget(m_playbackPage);
+        setAttribute(Qt::WA_TranslucentBackground, false);
+    }
 
     setWindowFlags(m_standardWindowFlags);
     setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
@@ -1943,6 +2036,18 @@ void MainWindow::exitCompactMode()
     positionPlaybackFeedback();
     revealPlayerChrome(false);
     updateCommandStates();
+}
+
+void MainWindow::resizeMusicModeWindow()
+{
+    if (m_compactMode != CompactMode::Music || !m_musicModeView) {
+        return;
+    }
+    const QSize target = m_musicModeView->preferredSize();
+    const QPoint topLeft = geometry().topLeft();
+    setMinimumSize(target);
+    setMaximumSize(target);
+    setGeometry(QRect(topLeft, target));
 }
 
 void MainWindow::applyAlwaysOnTop(bool enabled)
@@ -2260,6 +2365,9 @@ void MainWindow::positionPlaybackFeedback()
     if (!m_playbackPage || m_progressMode) {
         return;
     }
+    if (m_compactMode == CompactMode::Music) {
+        return;
+    }
     if (m_bufferingIndicator) {
         m_bufferingIndicator->move(
             std::max(0, (m_playbackPage->width()
@@ -2307,6 +2415,7 @@ void MainWindow::beginShutdown()
     m_mediaSettingsPanel = nullptr;
     m_welcomeView = nullptr;
     m_progressBar = nullptr;
+    m_musicModeView = nullptr;
     m_contentLayout = nullptr;
     m_playerCore->shutdown();
 }

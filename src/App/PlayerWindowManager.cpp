@@ -1,5 +1,6 @@
 #include "App/PlayerWindowManager.h"
 
+#include "App/MediaSourceResolver.h"
 #include "PlayerCore/PlayerCore.h"
 #include "UI/MainWindow/MainWindow.h"
 
@@ -60,8 +61,15 @@ MainWindow *PlayerWindowManager::createPlayer(
             removeSession(window);
         });
 
-    window->resize(urls.isEmpty() ? QSize(640, 400)
-                                  : QSize(1280, 720));
+    const bool startsWithAudio =
+        !urls.isEmpty() && MediaSourceResolver::isAudioFile(urls.first());
+    if (!urls.isEmpty()) {
+        window->prepareForInitialMedia();
+    }
+    window->resize(
+        urls.isEmpty() ? QSize(640, 400)
+        : startsWithAudio ? QSize(688, 520)
+                          : QSize(1280, 720));
     window->show();
     if (!urls.isEmpty()) {
         openInSession(sessionPtr, urls);

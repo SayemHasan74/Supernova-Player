@@ -189,6 +189,62 @@ QPainterPath iconPath(IinaIcon icon, const QRectF &bounds)
         }
         break;
     }
+    case IinaIcon::Close:
+        path.moveTo(center.x() - 4.5 * unit, center.y() - 4.5 * unit);
+        path.lineTo(center.x() + 4.5 * unit, center.y() + 4.5 * unit);
+        path.moveTo(center.x() + 4.5 * unit, center.y() - 4.5 * unit);
+        path.lineTo(center.x() - 4.5 * unit, center.y() + 4.5 * unit);
+        break;
+    case IinaIcon::Back:
+        path.moveTo(center.x() + 4.0 * unit, center.y() - 5.0 * unit);
+        path.lineTo(center.x() - 3.0 * unit, center.y());
+        path.lineTo(center.x() + 4.0 * unit, center.y() + 5.0 * unit);
+        break;
+    case IinaIcon::AlbumArt:
+        path.addRoundedRect(
+            QRectF(center.x() - 5.5 * unit, center.y() - 5.5 * unit,
+                   11.0 * unit, 11.0 * unit),
+            1.2 * unit, 1.2 * unit);
+        {
+            QPainterPath hole;
+            hole.addEllipse(
+                QPointF(center.x() + 2.1 * unit, center.y() - 2.0 * unit),
+                1.25 * unit, 1.25 * unit);
+            path = path.subtracted(hole);
+        }
+        break;
+    case IinaIcon::Shuffle:
+        path.moveTo(center.x() - 6.0 * unit, center.y() - 4.0 * unit);
+        path.lineTo(center.x() - 3.2 * unit, center.y() - 4.0 * unit);
+        path.cubicTo(center.x(), center.y() - 4.0 * unit,
+                     center.x() + 1.2 * unit, center.y() + 4.0 * unit,
+                     center.x() + 4.8 * unit, center.y() + 4.0 * unit);
+        path.moveTo(center.x() + 2.8 * unit, center.y() + 1.8 * unit);
+        path.lineTo(center.x() + 5.4 * unit, center.y() + 4.0 * unit);
+        path.lineTo(center.x() + 2.8 * unit, center.y() + 6.2 * unit);
+        path.moveTo(center.x() - 6.0 * unit, center.y() + 4.0 * unit);
+        path.lineTo(center.x() - 3.2 * unit, center.y() + 4.0 * unit);
+        path.cubicTo(center.x(), center.y() + 4.0 * unit,
+                     center.x() + 1.2 * unit, center.y() - 4.0 * unit,
+                     center.x() + 4.8 * unit, center.y() - 4.0 * unit);
+        path.moveTo(center.x() + 2.8 * unit, center.y() - 6.2 * unit);
+        path.lineTo(center.x() + 5.4 * unit, center.y() - 4.0 * unit);
+        path.lineTo(center.x() + 2.8 * unit, center.y() - 1.8 * unit);
+        break;
+    case IinaIcon::Repeat:
+        path.moveTo(center.x() - 5.5 * unit, center.y() - 3.5 * unit);
+        path.lineTo(center.x() + 3.5 * unit, center.y() - 3.5 * unit);
+        path.lineTo(center.x() + 5.5 * unit, center.y() - 1.2 * unit);
+        path.moveTo(center.x() + 3.0 * unit, center.y() - 5.8 * unit);
+        path.lineTo(center.x() + 5.5 * unit, center.y() - 3.5 * unit);
+        path.lineTo(center.x() + 3.0 * unit, center.y() - 1.2 * unit);
+        path.moveTo(center.x() + 5.5 * unit, center.y() + 3.5 * unit);
+        path.lineTo(center.x() - 3.5 * unit, center.y() + 3.5 * unit);
+        path.lineTo(center.x() - 5.5 * unit, center.y() + 1.2 * unit);
+        path.moveTo(center.x() - 3.0 * unit, center.y() + 5.8 * unit);
+        path.lineTo(center.x() - 5.5 * unit, center.y() + 3.5 * unit);
+        path.lineTo(center.x() - 3.0 * unit, center.y() + 1.2 * unit);
+        break;
     }
     return path;
 }

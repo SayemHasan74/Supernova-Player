@@ -32,6 +32,7 @@ class HistoryWindow;
 class PreferencesDialog;
 class MediaInspector;
 class OnlineSubtitleDialog;
+class MusicModeView;
 class QMenu;
 class QPoint;
 enum class PlayerCommand;
@@ -45,6 +46,7 @@ public:
 
     [[nodiscard]] bool isRenderContextReady() const noexcept;
     [[nodiscard]] bool isFullScreenMode() const noexcept;
+    void prepareForInitialMedia();
 
 public slots:
     void toggleFullScreen();
@@ -96,6 +98,7 @@ private:
     void enterCompactMode(CompactMode mode);
     void exitCompactMode();
     void finishEnteringCompactMode();
+    void resizeMusicModeWindow();
     void applyAlwaysOnTop(bool enabled);
     void executeCommand(PlayerCommand command);
     bool handleConfiguredKeyPress(QKeyEvent *event);
@@ -139,6 +142,7 @@ private:
     PreferencesDialog *m_preferencesDialog = nullptr;
     MediaInspector *m_mediaInspector = nullptr;
     OnlineSubtitleDialog *m_onlineSubtitleDialog = nullptr;
+    MusicModeView *m_musicModeView = nullptr;
     WelcomeView *m_welcomeView = nullptr;
     ProgressOnlyBar *m_progressBar = nullptr;
     QStackedLayout *m_contentLayout = nullptr;

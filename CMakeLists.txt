@@ -74,6 +74,8 @@ qt_add_executable(Supernova WIN32
     src/UI/Controls/PlaybackFeedback.cpp
     src/UI/Playlist/PlaylistPanel.h
     src/UI/Playlist/PlaylistPanel.cpp
+    src/UI/Music/MusicModeView.h
+    src/UI/Music/MusicModeView.cpp
     src/UI/Media/MediaSettingsPanel.h
     src/UI/Media/MediaSettingsPanel.cpp
     src/UI/Welcome/WelcomeView.h
