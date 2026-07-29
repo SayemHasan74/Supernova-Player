@@ -639,6 +639,18 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
             return true;
         }
     }
+    if (m_compactMode == CompactMode::Music
+        && isPlaybackInteractionUi
+        && event->type() == QEvent::MouseButtonDblClick) {
+        auto *mouseEvent = static_cast<QMouseEvent *>(event);
+        if (mouseEvent->button() == Qt::LeftButton
+            && !m_musicModeView->isInteractiveAt(
+                mouseEvent->globalPosition().toPoint())) {
+            toggleFullScreen();
+            mouseEvent->accept();
+            return true;
+        }
+    }
     if (watched == m_videoSurface
         && event->type() == QEvent::MouseButtonDblClick) {
         auto *mouseEvent = static_cast<QMouseEvent *>(event);

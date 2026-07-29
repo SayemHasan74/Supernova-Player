@@ -17,6 +17,7 @@
 #include <QGraphicsOpacityEffect>
 #include <QLabel>
 #include <QLinearGradient>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPropertyAnimation>
@@ -30,11 +31,14 @@
 #include <cmath>
 
 namespace {
-constexpr int baseMusicWidth = 688;
-constexpr int baseMusicHeight = 520;
+constexpr int baseMusicWidth = 576;
+constexpr int baseMusicHeight = 386;
+constexpr int playlistMusicWidth = 730;
 constexpr int compactMusicWidth = 260;
 constexpr int compactMusicHeight = 330;
-constexpr int playlistWidth = 300;
+constexpr int playlistWidth = 310;
+constexpr int playlistOverlap = 156;
+constexpr int normalControlsHeight = 44;
 constexpr int hoverFadeMs = 200;
 
 QColor mixColor(const QColor &first, const QColor &second, double amount)
@@ -233,11 +237,11 @@ MusicModeView::MusicModeView(PlayerCore *playerCore, QWidget *parent)
     m_titleLabel = new QLabel(m_infoView);
     m_titleLabel->setTextInteractionFlags(Qt::NoTextInteraction);
     styleMetadataLabel(
-        m_titleLabel, 13, Supernova::Ui::primaryText);
+        m_titleLabel, 16, Supernova::Ui::primaryText);
     m_artistAlbumLabel = new QLabel(m_infoView);
     m_artistAlbumLabel->setTextInteractionFlags(Qt::NoTextInteraction);
     styleMetadataLabel(
-        m_artistAlbumLabel, 11, Supernova::Ui::secondaryText);
+        m_artistAlbumLabel, 12, Supernova::Ui::secondaryText);
     m_genreLabel = new QLabel(m_infoView);
     m_genreLabel->setTextInteractionFlags(Qt::NoTextInteraction);
     styleMetadataLabel(
@@ -456,11 +460,11 @@ void MusicModeView::attachPlaylistPanel(PlaylistPanel *panel)
     }
     m_playlistPanel = panel;
     if (m_playlistPanel) {
+        const int panelWidth = std::min(playlistWidth, width());
         m_playlistPanel->setParent(this);
         m_playlistPanel->hide();
         m_playlistPanel->setGeometry(
-            std::max(0, width() - playlistWidth),
-            0, playlistWidth, height());
+            width() - panelWidth, 0, panelWidth, height());
     }
 }
 
@@ -484,6 +488,7 @@ void MusicModeView::setPlaylistVisible(bool visible)
     m_playlistPanel->setVisible(visible);
     m_playlistButton->setToolTip(
         visible ? tr("Hide Playlist") : tr("Show Playlist"));
+    emit preferredSizeChanged();
     resizeEvent(nullptr);
 }
 
@@ -499,9 +504,12 @@ bool MusicModeView::isArtworkVisible() const noexcept
 
 QSize MusicModeView::preferredSize() const
 {
-    return m_compactPresentation
-        ? QSize(compactMusicWidth, compactMusicHeight)
-        : QSize(baseMusicWidth, baseMusicHeight);
+    if (m_compactPresentation) {
+        return QSize(compactMusicWidth, compactMusicHeight);
+    }
+    return QSize(
+        m_showPlaylist ? playlistMusicWidth : baseMusicWidth,
+        baseMusicHeight);
 }
 
 void MusicModeView::setFullScreen(bool fullScreen)
@@ -572,6 +580,16 @@ void MusicModeView::leaveEvent(QEvent *event)
     }
 }
 
+void MusicModeView::mouseDoubleClickEvent(QMouseEvent *event)
+{
+    if (event->button() == Qt::LeftButton) {
+        emit fullScreenRequested();
+        event->accept();
+        return;
+    }
+    QWidget::mouseDoubleClickEvent(event);
+}
+
 void MusicModeView::paintEvent(QPaintEvent *event)
 {
     Q_UNUSED(event)
@@ -584,37 +602,42 @@ void MusicModeView::paintEvent(QPaintEvent *event)
     const auto [coverTop, coverBottom] = coverPalette(m_artwork);
     QLinearGradient coverGradient(0, 0, 0, height());
     coverGradient.setColorAt(
-        0.0, mixColor(coverTop, QColor(18, 18, 22), 0.30));
+        0.0, mixColor(coverTop, QColor(18, 18, 22), 0.18));
     coverGradient.setColorAt(
-        1.0, mixColor(coverBottom, QColor(9, 11, 16), 0.24));
+        1.0, mixColor(coverBottom, QColor(9, 11, 16), 0.20));
     painter.fillRect(rect(), coverGradient);
 
     const QRect baseRect = rect();
     if (!m_artwork.isNull()) {
         painter.setOpacity(m_compactPresentation && !m_fullScreen
-                               ? 0.10 : 0.18);
+                               ? 0.12 : 0.22);
         painter.drawImage(
             baseRect,
             m_artwork.scaled(
                 baseRect.size(), Qt::KeepAspectRatioByExpanding,
                 Qt::SmoothTransformation));
         painter.setOpacity(1.0);
-        painter.fillRect(baseRect, QColor(10, 11, 16, 92));
+        painter.fillRect(baseRect, QColor(10, 11, 16, 62));
     }
     if (m_showArtwork) {
-        const int contentWidth = width();
         const bool compact =
             m_compactPresentation && !m_fullScreen;
+        const int contentWidth =
+            !m_fullScreen && !compact
+            ? std::min(baseMusicWidth, width())
+            : width();
         const int artSize = compact
             ? 112
-            : width() <= baseMusicWidth && height() <= baseMusicHeight
-            ? 220
+            : !m_fullScreen
+            ? 180
             : std::clamp(
                   std::min(contentWidth * 36 / 100,
                            height() * 46 / 100),
-                  220, 420);
+                  180, 420);
         const int artTop = compact
             ? 42
+            : !m_fullScreen
+            ? 44
             : std::max(42, (height() - artSize - 205) / 2);
         const QRect artRect(
             (contentWidth - artSize) / 2,
@@ -658,9 +681,14 @@ void MusicModeView::paintEvent(QPaintEvent *event)
 
     const bool compactControls =
         m_compactPresentation && !m_fullScreen;
+    const int playerWidth =
+        !m_fullScreen && !compactControls
+        ? std::min(baseMusicWidth, width())
+        : width();
     const QRect controlsRect(
-        0, compactControls ? 240 : height() - 58,
-        width(), compactControls ? height() - 240 : 58);
+        0, compactControls ? 240 : height() - normalControlsHeight,
+        playerWidth,
+        compactControls ? height() - 240 : normalControlsHeight);
     painter.fillRect(controlsRect, QColor(18, 18, 21, 115));
     painter.setPen(QColor(255, 255, 255, 32));
     painter.drawLine(
@@ -677,32 +705,37 @@ void MusicModeView::resizeEvent(QResizeEvent *event)
         QWidget::resizeEvent(event);
     }
     const bool compact = m_compactPresentation && !m_fullScreen;
-    const int contentWidth = width();
+    const int contentWidth =
+        !m_fullScreen && !compact
+        ? std::min(baseMusicWidth, width())
+        : width();
     const int artSize = compact
         ? 112
-        : width() <= baseMusicWidth && height() <= baseMusicHeight
-        ? 220
+        : !m_fullScreen
+        ? 180
         : std::clamp(
               std::min(contentWidth * 36 / 100,
                        height() * 46 / 100),
-              220, 420);
+              180, 420);
     const int artTop = compact
         ? 42
+        : !m_fullScreen
+        ? 44
         : std::max(42, (height() - artSize - 205) / 2);
     const int metadataY = artTop + artSize + 13;
     const int infoWidth = compact
         ? width() - 24 : std::max(260, contentWidth - 160);
     m_infoView->setGeometry(
         std::max(12, (contentWidth - infoWidth) / 2),
-        metadataY, infoWidth, 104);
+        metadataY, infoWidth, compact ? 78 : 76);
     m_titleLabel->setGeometry(
-        0, 0, m_infoView->width(), compact ? 24 : 30);
+        0, 0, m_infoView->width(), compact ? 24 : 26);
     m_artistAlbumLabel->setGeometry(
-        0, compact ? 23 : 31,
-        m_infoView->width(), compact ? 20 : 24);
+        0, compact ? 23 : 25,
+        m_infoView->width(), compact ? 20 : 21);
     m_genreLabel->setGeometry(
-        0, compact ? 43 : 56,
-        m_infoView->width(), compact ? 18 : 22);
+        0, compact ? 43 : 46,
+        m_infoView->width(), compact ? 18 : 19);
     m_controlsView->setGeometry(0, 0, width(), height());
 
     m_closeButton->setGeometry(12, 10, 24, 24);
@@ -725,38 +758,48 @@ void MusicModeView::resizeEvent(QResizeEvent *event)
         m_upNextLabel->setGeometry(20, 294, 190, 22);
         m_upNextLabel->show();
     } else {
-        m_volumeButton->setGeometry(12, height() - 50, 26, 26);
-        m_volumeSlider->setGeometry(42, height() - 42, 82, 16);
+        m_volumeButton->setGeometry(12, height() - 36, 26, 26);
+        m_volumeSlider->setGeometry(42, height() - 28, 68, 16);
         m_volumeSlider->show();
         m_shuffleButton->setGeometry(
-            center - 86, height() - 48, 28, 28);
+            center - 92, height() - 35, 28, 28);
         m_previousButton->setGeometry(
-            center - 52, height() - 50, 30, 30);
+            center - 58, height() - 37, 30, 30);
         m_playButton->setGeometry(
-            center - 14, height() - 56, 40, 40);
+            center - 18, height() - 42, 38, 38);
         m_nextButton->setGeometry(
-            center + 34, height() - 50, 30, 30);
+            center + 27, height() - 37, 30, 30);
         m_repeatButton->setGeometry(
-            center + 70, height() - 48, 28, 28);
+            center + 61, height() - 35, 28, 28);
+        m_compactButton->setGeometry(
+            contentWidth - 142, height() - 35, 28, 28);
         m_artworkButton->setGeometry(
-            contentWidth - 108, height() - 48, 28, 28);
+            contentWidth - 108, height() - 35, 28, 28);
         m_openFileButton->setGeometry(
-            contentWidth - 74, height() - 48, 28, 28);
+            contentWidth - 74, height() - 35, 28, 28);
         m_playlistButton->setGeometry(
-            contentWidth - 40, height() - 48, 28, 28);
+            contentWidth - 40, height() - 35, 28, 28);
         m_upNextLabel->hide();
     }
 
-    const int timelineY = compact ? 222 : height() - 92;
+    const int timelineY = compact ? 222 : height() - 67;
     m_elapsedLabel->setGeometry(8, timelineY, 38, 16);
     m_timeline->setGeometry(
         48, timelineY, std::max(100, contentWidth - 96), 16);
     m_durationLabel->setGeometry(
         contentWidth - 46, timelineY, 38, 16);
     if (m_playlistPanel) {
+        const int panelWidth = std::min(playlistWidth, width());
+        const int panelX =
+            !compact && !m_fullScreen && width() > baseMusicWidth
+            ? std::max(0, baseMusicWidth - playlistOverlap)
+            : width() - panelWidth;
+        const int panelHeight =
+            !compact && !m_fullScreen
+            ? std::max(1, height() - normalControlsHeight)
+            : height();
         m_playlistPanel->setGeometry(
-            std::max(0, width() - playlistWidth),
-            0, playlistWidth, height());
+            panelX, 0, panelWidth, panelHeight);
         if (m_showPlaylist) {
             m_playlistPanel->raise();
         }
