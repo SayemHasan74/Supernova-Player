@@ -33,11 +33,9 @@
 namespace {
 constexpr int baseMusicWidth = 576;
 constexpr int baseMusicHeight = 386;
-constexpr int playlistMusicWidth = 730;
 constexpr int compactMusicWidth = 260;
 constexpr int compactMusicHeight = 330;
 constexpr int playlistWidth = 310;
-constexpr int playlistOverlap = 156;
 constexpr int normalControlsHeight = 44;
 constexpr int hoverFadeMs = 200;
 
@@ -491,7 +489,6 @@ void MusicModeView::setPlaylistVisible(bool visible)
     m_playlistPanel->setVisible(visible);
     m_playlistButton->setToolTip(
         visible ? tr("Hide Playlist") : tr("Show Playlist"));
-    emit preferredSizeChanged();
     resizeEvent(nullptr);
 }
 
@@ -510,9 +507,7 @@ QSize MusicModeView::preferredSize() const
     if (m_compactPresentation) {
         return QSize(compactMusicWidth, compactMusicHeight);
     }
-    return QSize(
-        m_showPlaylist ? playlistMusicWidth : baseMusicWidth,
-        baseMusicHeight);
+    return QSize(baseMusicWidth, baseMusicHeight);
 }
 
 void MusicModeView::setFullScreen(bool fullScreen)
@@ -808,16 +803,11 @@ void MusicModeView::resizeEvent(QResizeEvent *event)
         contentWidth - 46, timelineY, 38, 16);
     if (m_playlistPanel) {
         const int panelWidth = std::min(playlistWidth, width());
-        const int panelX =
-            !compact && !m_fullScreen && width() > baseMusicWidth
-            ? std::max(0, baseMusicWidth - playlistOverlap)
-            : width() - panelWidth;
+        const int panelX = width() - panelWidth;
         const int panelHeight =
             compact
             ? std::max(1, height() - 48)
-            : !m_fullScreen
-            ? std::max(1, height() - normalControlsHeight)
-            : height();
+            : std::max(1, height() - normalControlsHeight);
         m_playlistPanel->setGeometry(
             panelX, 0, panelWidth, panelHeight);
         if (m_showPlaylist) {
