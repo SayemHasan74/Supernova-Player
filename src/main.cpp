@@ -7,6 +7,9 @@
 #include "Plugins/PluginManager.h"
 
 #include <QCoreApplication>
+#include <QDir>
+#include <QFileInfo>
+#include <QIcon>
 #include <QList>
 #include <QObject>
 #include <QUrl>
@@ -22,6 +25,20 @@ QList<QUrl> mediaUrls(const QStringList &paths)
 
 int main(int argc, char *argv[])
 {
+    // Keep source-tree builds independent from a developer shell. A stale
+    // machine-wide Qt path can otherwise make Windows discover an
+    // incompatible platform plugin before the one deployed beside the app.
+    const QString executableDirectory =
+        QFileInfo(QString::fromLocal8Bit(argv[0])).absolutePath();
+    qputenv(
+        "QT_PLUGIN_PATH",
+        QDir::toNativeSeparators(executableDirectory).toLocal8Bit());
+    qputenv(
+        "QT_QPA_PLATFORM_PLUGIN_PATH",
+        QDir::toNativeSeparators(
+            QDir(executableDirectory).filePath(
+                QStringLiteral("platforms"))).toLocal8Bit());
+
     QCoreApplication::setAttribute(Qt::AA_UseDesktopOpenGL);
     QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
 
@@ -29,6 +46,8 @@ int main(int argc, char *argv[])
     app.setApplicationName(QStringLiteral("Supernova"));
     app.setApplicationVersion(QStringLiteral(SUPERNOVA_VERSION));
     app.setOrganizationName(QStringLiteral("Supernova Project"));
+    app.setWindowIcon(
+        QIcon(QStringLiteral(":/icons/supernova.ico")));
     app.initialize();
 
     const QStringList applicationArguments = Application::arguments();

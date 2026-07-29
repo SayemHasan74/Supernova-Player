@@ -140,6 +140,31 @@ if(MSVC)
     target_compile_options(Supernova PRIVATE /W4 /permissive-)
 endif()
 
+if(MSVC AND CMAKE_BUILD_TYPE STREQUAL "Debug")
+    # A Debug Qt build loads the non-redistributable Visual C++ Debug CRT.
+    # windeployqt does not copy it, so a source build launched outside a
+    # Visual Studio developer shell finds qwindowsd.dll but cannot load it.
+    set(_supernova_vc_root "${CMAKE_CXX_COMPILER}")
+    foreach(_parent RANGE 1 7)
+        cmake_path(
+            GET _supernova_vc_root PARENT_PATH _supernova_vc_root)
+    endforeach()
+    file(GLOB _supernova_debug_crt
+        "${_supernova_vc_root}/Redist/MSVC/*/debug_nonredist/x64/Microsoft.VC143.DebugCRT/*.dll")
+    if(NOT _supernova_debug_crt)
+        message(FATAL_ERROR
+            "Visual C++ Debug CRT was not found. Install the MSVC Debug Runtime component.")
+    endif()
+    add_custom_command(TARGET Supernova POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            ${_supernova_debug_crt}
+            "$<TARGET_FILE_DIR:Supernova>"
+        COMMENT "Deploying the Visual C++ Debug CRT"
+        COMMAND_EXPAND_LISTS
+        VERBATIM
+    )
+endif()
+
 set_target_properties(Supernova PROPERTIES
     OUTPUT_NAME "Supernova"
     WIN32_EXECUTABLE TRUE

@@ -1,5 +1,6 @@
 <RCC>
   <qresource prefix="/">
     <file alias="icons/supernova.ico">icons/supernova.ico</file>
+    <file alias="icons/supernova.png">icons/supernova.png</file>
   </qresource>
 </RCC>
