@@ -3,6 +3,7 @@
 #include "Core/Logger.h"
 
 #include <QCryptographicHash>
+#include <QBuffer>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -326,6 +327,121 @@ QList<MediaThumbnail> generateThumbnails(
     mpv_terminate_destroy(mpv);
     return thumbnails;
 }
+
+QImage readPreviewCache(const QUrl &url, const QString &key)
+{
+    const QFileInfo source(url.toLocalFile());
+    const QDir directory(mediaCacheDirectory(key));
+    QFile metadata(directory.filePath(QStringLiteral("preview.json")));
+    if (!metadata.open(QIODevice::ReadOnly)) {
+        return {};
+    }
+    const QJsonObject root =
+        QJsonDocument::fromJson(metadata.readAll()).object();
+    if (root.value(QStringLiteral("version")).toInt() != cacheVersion
+        || root.value(QStringLiteral("fileSize")).toDouble()
+               != static_cast<double>(source.size())
+        || root.value(QStringLiteral("modified")).toString()
+               != source.lastModified().toUTC().toString(
+                      Qt::ISODateWithMs)) {
+        return {};
+    }
+    return QImage(directory.filePath(QStringLiteral("preview.png")));
+}
+
+void writePreviewCache(
+    const QUrl &url, const QString &key, const QImage &image)
+{
+    QDir directory(mediaCacheDirectory(key));
+    if (!directory.mkpath(QStringLiteral("."))) {
+        return;
+    }
+    QSaveFile preview(
+        directory.filePath(QStringLiteral("preview.png")));
+    if (!preview.open(QIODevice::WriteOnly)) {
+        return;
+    }
+    QByteArray encoded;
+    QBuffer buffer(&encoded);
+    if (!buffer.open(QIODevice::WriteOnly)
+        || !image.save(&buffer, "PNG")) {
+        return;
+    }
+    preview.write(encoded);
+    if (!preview.commit()) {
+        return;
+    }
+    const QFileInfo source(url.toLocalFile());
+    const QJsonObject root{
+        {QStringLiteral("version"), cacheVersion},
+        {QStringLiteral("fileSize"), static_cast<double>(source.size())},
+        {QStringLiteral("modified"),
+         source.lastModified().toUTC().toString(Qt::ISODateWithMs)}};
+    QSaveFile metadata(
+        directory.filePath(QStringLiteral("preview.json")));
+    if (metadata.open(QIODevice::WriteOnly)) {
+        metadata.write(
+            QJsonDocument(root).toJson(QJsonDocument::Compact));
+        metadata.commit();
+    }
+}
+
+QImage generatePreview(const QUrl &url, int width)
+{
+    mpv_handle *mpv = mpv_create();
+    if (!mpv) {
+        return {};
+    }
+    const auto option = [mpv](const char *name, const char *value) {
+        return mpv_set_option_string(mpv, name, value) >= 0;
+    };
+    option("config", "no");
+    option("terminal", "no");
+    option("input-default-bindings", "no");
+    option("audio", "no");
+    option("sub", "no");
+    option("secondary-sid", "no");
+    option("pause", "yes");
+    option("hwdec", "no");
+    option("vd-lavc-threads", "2");
+    option("vo", "null");
+    option("hr-seek", "no");
+    if (mpv_initialize(mpv) < 0) {
+        mpv_destroy(mpv);
+        return {};
+    }
+    std::atomic<quint64> generation{0};
+    const QByteArray path = QFile::encodeName(url.toLocalFile());
+    const char *load[] = {"loadfile", path.constData(), "replace", nullptr};
+    if (mpv_command(mpv, load) < 0
+        || !waitForEvent(
+            mpv, MPV_EVENT_FILE_LOADED, generation, 0)) {
+        mpv_terminate_destroy(mpv);
+        return {};
+    }
+    waitForEvent(
+        mpv, MPV_EVENT_PLAYBACK_RESTART, generation, 0, 4.0);
+    double duration = 0.0;
+    mpv_get_property(
+        mpv, "duration", MPV_FORMAT_DOUBLE, &duration);
+    const double position =
+        duration > 0.0 && duration < 20.0
+        ? duration / 2.0 : 10.0;
+    const QByteArray time = QByteArray::number(position, 'f', 3);
+    const char *seek[] = {
+        "seek", time.constData(), "absolute+keyframes", nullptr};
+    if (mpv_command(mpv, seek) >= 0) {
+        waitForEvent(
+            mpv, MPV_EVENT_PLAYBACK_RESTART, generation, 0, 4.0);
+    }
+    QImage image = screenshotRaw(mpv);
+    mpv_terminate_destroy(mpv);
+    if (!image.isNull()) {
+        image = image.scaledToWidth(
+            std::max(80, width * 2), Qt::SmoothTransformation);
+    }
+    return image;
+}
 }
 
 ThumbnailProvider::ThumbnailProvider(QObject *parent)
@@ -352,6 +468,41 @@ bool ThumbnailProvider::clearCache()
 {
     QDir directory(cacheDirectory());
     return !directory.exists() || directory.removeRecursively();
+}
+
+QImage ThumbnailProvider::previewFor(
+    const QUrl &url, int displayWidth)
+{
+    if (!url.isLocalFile()
+        || !QFileInfo::exists(url.toLocalFile())) {
+        return {};
+    }
+    const QString key = stableMediaKey(url);
+    const QList<MediaThumbnail> cached = readCache(url, key);
+    if (!cached.isEmpty()) {
+        const double duration = cached.constLast().seconds;
+        const double preferred =
+            duration > 0.0 && duration < 20.0
+            ? duration / 2.0 : 10.0;
+        auto nearest = std::lower_bound(
+            cached.cbegin(), cached.cend(), preferred,
+            [](const MediaThumbnail &thumbnail, double target) {
+                return thumbnail.seconds < target;
+            });
+        if (nearest == cached.cend()) {
+            nearest = std::prev(cached.cend());
+        }
+        return nearest->image;
+    }
+    QImage preview = readPreviewCache(url, key);
+    if (!preview.isNull()) {
+        return preview;
+    }
+    preview = generatePreview(url, displayWidth);
+    if (!preview.isNull()) {
+        writePreviewCache(url, key, preview);
+    }
+    return preview;
 }
 
 void ThumbnailProvider::clear()

@@ -3,6 +3,9 @@
 #include "PlayerCore/PlaybackHistory.h"
 #include "PlayerCore/RecentMedia.h"
 
+#include <QHash>
+#include <QImage>
+#include <QSet>
 #include <QUrl>
 #include <QWidget>
 
@@ -30,6 +33,8 @@ protected:
 private:
     void activateCurrentItem();
     void rebuildMedia();
+    void requestPreview(const QUrl &url);
+    void applyPreview(const QUrl &url, const QImage &image);
 
     QPushButton *m_resumeButton = nullptr;
     QPushButton *m_historyButton = nullptr;
@@ -37,5 +42,7 @@ private:
     QList<PlaybackHistoryEntry> m_history;
     QList<RecentMediaEntry> m_recentMedia;
     QList<PlaybackHistoryEntry> m_visibleHistory;
+    QHash<QString, QImage> m_previews;
+    QSet<QString> m_pendingPreviews;
     bool m_hasRecentMedia = false;
 };

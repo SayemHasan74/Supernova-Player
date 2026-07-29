@@ -409,8 +409,12 @@ if(BUILD_TESTING)
         tests/WelcomeViewTests.cpp
         src/Core/Logger.h
         src/Core/Logger.cpp
+        src/App/MediaSourceResolver.h
+        src/App/MediaSourceResolver.cpp
         src/PlayerCore/PlaybackHistory.h
         src/PlayerCore/PlaybackHistory.cpp
+        src/PlayerCore/ThumbnailProvider.h
+        src/PlayerCore/ThumbnailProvider.cpp
         src/UI/Welcome/WelcomeView.h
         src/UI/Welcome/WelcomeView.cpp
     )
@@ -421,7 +425,8 @@ if(BUILD_TESTING)
         Qt6::Core
         Qt6::Gui
         Qt6::Widgets
-        Qt6::Test)
+        Qt6::Test
+        Supernova::mpv)
     set_target_properties(
         SupernovaWelcomeViewTests PROPERTIES
         WIN32_EXECUTABLE FALSE)

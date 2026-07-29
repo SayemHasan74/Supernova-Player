@@ -1,7 +1,9 @@
 #include "UI/Welcome/WelcomeView.h"
 
+#include "App/MediaSourceResolver.h"
+#include "PlayerCore/ThumbnailProvider.h"
+
 #include <QAbstractItemView>
-#include <QFileIconProvider>
 #include <QFileInfo>
 #include <QFrame>
 #include <QHBoxLayout>
@@ -11,8 +13,9 @@
 #include <QListWidget>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPointer>
 #include <QPushButton>
-#include <QStyle>
+#include <QThreadPool>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -37,6 +40,53 @@ QString formatTime(double seconds)
 QString displayName(const PlaybackHistoryEntry &entry)
 {
     return !entry.title.isEmpty() ? entry.title : entry.displayName;
+}
+
+QString previewKey(const QUrl &url)
+{
+    return PlaybackHistoryStore::keyForUrl(url);
+}
+
+QPixmap previewPixmap(const QImage &image)
+{
+    constexpr QSize extent(36, 22);
+    QPixmap pixmap(extent);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+    QPainterPath clip;
+    clip.addRoundedRect(QRectF(QPointF(0, 0), extent), 3, 3);
+    painter.setClipPath(clip);
+    if (!image.isNull()) {
+        const QImage scaled = image.scaled(
+            extent, Qt::KeepAspectRatioByExpanding,
+            Qt::SmoothTransformation);
+        painter.drawImage(
+            QRect(QPoint(0, 0), extent),
+            scaled,
+            QRect(
+                (scaled.width() - extent.width()) / 2,
+                (scaled.height() - extent.height()) / 2,
+                extent.width(), extent.height()));
+    } else {
+        painter.fillRect(
+            QRect(QPoint(0, 0), extent),
+            QColor(255, 255, 255, 18));
+        painter.setPen(QPen(QColor(235, 235, 245, 105), 1));
+        painter.drawRoundedRect(
+            QRectF(0.5, 0.5, extent.width() - 1,
+                   extent.height() - 1),
+            3, 3);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(235, 235, 245, 150));
+        QPainterPath play;
+        play.moveTo(15, 6);
+        play.lineTo(24, 11);
+        play.lineTo(15, 16);
+        play.closeSubpath();
+        painter.drawPath(play);
+    }
+    return pixmap;
 }
 
 class BrandMark final : public QWidget {
@@ -75,24 +125,32 @@ protected:
 class RecentRow final : public QWidget {
 public:
     RecentRow(
-        const PlaybackHistoryEntry &entry, const QIcon &icon,
+        const PlaybackHistoryEntry &entry, const QImage &preview,
         QWidget *parent = nullptr)
         : QWidget(parent)
     {
         setAttribute(Qt::WA_TransparentForMouseEvents);
         auto *line = new QHBoxLayout(this);
         line->setContentsMargins(9, 4, 2, 4);
-        line->setSpacing(4);
-        auto *iconLabel = new QLabel(this);
-        iconLabel->setPixmap(icon.pixmap(16, 16));
-        iconLabel->setFixedSize(16, 16);
+        line->setSpacing(7);
+        m_preview = new QLabel(this);
+        m_preview->setPixmap(previewPixmap(preview));
+        m_preview->setFixedSize(36, 22);
         auto *title = new QLabel(displayName(entry), this);
         title->setStyleSheet(QStringLiteral("color: rgb(241,241,246);"));
         title->setToolTip(entry.url.toDisplayString());
         title->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-        line->addWidget(iconLabel);
+        line->addWidget(m_preview);
         line->addWidget(title, 1);
     }
+
+    void setPreview(const QImage &preview)
+    {
+        m_preview->setPixmap(previewPixmap(preview));
+    }
+
+private:
+    QLabel *m_preview = nullptr;
 };
 
 class WelcomeActionButton final : public QPushButton {
@@ -321,20 +379,69 @@ void WelcomeView::rebuildMedia()
         recentRows = m_visibleHistory.mid(1, 9);
     }
 
-    QFileIconProvider iconProvider;
     for (const PlaybackHistoryEntry &entry : std::as_const(recentRows)) {
         auto *item = new QListWidgetItem(m_recentList);
         item->setData(Qt::UserRole, entry.url);
         item->setToolTip(entry.url.toDisplayString());
-        item->setSizeHint(QSize(0, 28));
-        const QIcon icon = entry.url.isLocalFile()
-            ? iconProvider.icon(QFileInfo(entry.url.toLocalFile()))
-            : style()->standardIcon(QStyle::SP_FileIcon);
+        item->setSizeHint(QSize(0, 32));
+        const QString key = previewKey(entry.url);
+        const QImage preview = m_previews.value(key);
         m_recentList->setItemWidget(
-            item, new RecentRow(entry, icon, m_recentList));
+            item, new RecentRow(entry, preview, m_recentList));
+        if (preview.isNull()
+            && entry.url.isLocalFile()
+            && !MediaSourceResolver::isAudioFile(entry.url)) {
+            requestPreview(entry.url);
+        }
     }
     m_recentList->setCurrentItem(nullptr);
     m_recentList->clearSelection();
+}
+
+void WelcomeView::requestPreview(const QUrl &url)
+{
+    const QString key = previewKey(url);
+    if (m_pendingPreviews.contains(key)
+        || m_previews.contains(key)) {
+        return;
+    }
+    m_pendingPreviews.insert(key);
+    QPointer<WelcomeView> guarded(this);
+    QThreadPool::globalInstance()->start([guarded, url] {
+        const QImage image = ThumbnailProvider::previewFor(url, 160);
+        if (!guarded) {
+            return;
+        }
+        QMetaObject::invokeMethod(
+            guarded,
+            [guarded, url, image] {
+                if (guarded) {
+                    guarded->applyPreview(url, image);
+                }
+            },
+            Qt::QueuedConnection);
+    });
+}
+
+void WelcomeView::applyPreview(
+    const QUrl &url, const QImage &image)
+{
+    const QString key = previewKey(url);
+    m_pendingPreviews.remove(key);
+    if (image.isNull()) {
+        return;
+    }
+    m_previews.insert(key, image);
+    for (int index = 0; index < m_recentList->count(); ++index) {
+        QListWidgetItem *item = m_recentList->item(index);
+        if (previewKey(item->data(Qt::UserRole).toUrl()) != key) {
+            continue;
+        }
+        if (auto *row = dynamic_cast<RecentRow *>(
+                m_recentList->itemWidget(item))) {
+            row->setPreview(image);
+        }
+    }
 }
 
 bool WelcomeView::eventFilter(QObject *watched, QEvent *event)

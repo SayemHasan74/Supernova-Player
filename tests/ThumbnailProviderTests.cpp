@@ -9,6 +9,7 @@ class ThumbnailProviderTests final : public QObject {
 
 private slots:
     void ignoresUnsupportedRequests();
+    void generatesSinglePreviewWhenFixtureIsProvided();
     void generatesFramesWhenFixtureIsProvided();
 };
 
@@ -19,6 +20,19 @@ void ThumbnailProviderTests::ignoresUnsupportedRequests()
     provider.request({}, 0.0);
     QCOMPARE(ready.count(), 0);
     QVERIFY(provider.imageAt(10.0).isNull());
+}
+
+void ThumbnailProviderTests::generatesSinglePreviewWhenFixtureIsProvided()
+{
+    const QString path =
+        qEnvironmentVariable("SUPERNOVA_TEST_VIDEO");
+    if (path.isEmpty() || !QFileInfo::exists(path)) {
+        QSKIP("SUPERNOVA_TEST_VIDEO was not provided");
+    }
+    const QImage preview = ThumbnailProvider::previewFor(
+        QUrl::fromLocalFile(path), 160);
+    QVERIFY(!preview.isNull());
+    QVERIFY(preview.width() >= 160);
 }
 
 void ThumbnailProviderTests::generatesFramesWhenFixtureIsProvided()
@@ -39,4 +53,3 @@ void ThumbnailProviderTests::generatesFramesWhenFixtureIsProvided()
 QTEST_GUILESS_MAIN(ThumbnailProviderTests)
 
 #include "ThumbnailProviderTests.moc"
-

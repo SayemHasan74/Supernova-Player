@@ -28,6 +28,8 @@ public:
 
     [[nodiscard]] static QString cacheDirectory();
     static bool clearCache();
+    [[nodiscard]] static QImage previewFor(
+        const QUrl &url, int displayWidth = 160);
 
 signals:
     void thumbnailsChanged();
@@ -46,4 +48,3 @@ private:
     double m_progress = 0.0;
     bool m_ready = false;
 };
-
