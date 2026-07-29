@@ -153,6 +153,22 @@ QPainterPath iconPath(IinaIcon icon, const QRectF &bounds)
         }
         break;
     }
+    case IinaIcon::PictureInPicture:
+        path.addRoundedRect(
+            QRectF(center.x() - 6.2 * unit,
+                   center.y() - 4.8 * unit,
+                   12.4 * unit, 9.6 * unit),
+            1.1 * unit, 1.1 * unit);
+        {
+            QPainterPath inner;
+            inner.addRoundedRect(
+                QRectF(center.x() + 0.2 * unit,
+                       center.y() - 0.2 * unit,
+                       4.6 * unit, 3.4 * unit),
+                0.6 * unit, 0.6 * unit);
+            path = path.subtracted(inner);
+        }
+        break;
     case IinaIcon::FullScreen:
     case IinaIcon::ExitFullScreen: {
         const bool inward = icon == IinaIcon::ExitFullScreen;
@@ -558,6 +574,16 @@ IinaPlayerChrome::IinaPlayerChrome(
     m_settingsButton->setToolTip(tr("Quick Settings"));
     controls->addWidget(m_settingsButton);
 
+    m_pictureInPictureButton =
+        new IinaIconButton(IinaIcon::PictureInPicture, this);
+    m_pictureInPictureButton->setObjectName(
+        QStringLiteral("pictureInPictureButton"));
+    m_pictureInPictureButton->setFixedSize(
+        compactButtonExtent, compactButtonExtent);
+    m_pictureInPictureButton->setToolTip(
+        tr("Enter Picture in Picture"));
+    controls->addWidget(m_pictureInPictureButton);
+
     m_fullScreenButton =
         new IinaIconButton(IinaIcon::FullScreen, this);
     m_fullScreenButton->setObjectName(QStringLiteral("fullScreenButton"));
@@ -608,6 +634,8 @@ IinaPlayerChrome::IinaPlayerChrome(
             this, &IinaPlayerChrome::playlistRequested);
     connect(m_settingsButton, &QAbstractButton::clicked,
             this, &IinaPlayerChrome::mediaSettingsRequested);
+    connect(m_pictureInPictureButton, &QAbstractButton::clicked,
+            this, &IinaPlayerChrome::pictureInPictureRequested);
     connect(m_previousButton, &QAbstractButton::clicked,
             m_playerCore, [this] {
                 m_playerCore->navigateInPlaylist(false);
@@ -627,6 +655,8 @@ IinaPlayerChrome::IinaPlayerChrome(
     connect(m_openFileButton, &QAbstractButton::clicked,
             this, &IinaPlayerChrome::activity);
     connect(m_playlistButton, &QAbstractButton::clicked,
+            this, &IinaPlayerChrome::activity);
+    connect(m_pictureInPictureButton, &QAbstractButton::clicked,
             this, &IinaPlayerChrome::activity);
     connect(m_timeline, &IinaTimeline::seekRequested,
             m_playerCore, [this](double percent) {
@@ -726,6 +756,13 @@ void IinaPlayerChrome::setFullScreen(bool fullScreen)
     m_fullScreenButton->setToolTip(
         fullScreen ? tr("Exit Full Screen")
                    : tr("Enter Full Screen"));
+}
+
+void IinaPlayerChrome::setPictureInPicture(bool pictureInPicture)
+{
+    m_pictureInPictureButton->setToolTip(
+        pictureInPicture ? tr("Exit Picture in Picture")
+                         : tr("Enter Picture in Picture"));
 }
 
 void IinaPlayerChrome::reveal(bool animated)

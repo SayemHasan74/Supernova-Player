@@ -871,6 +871,10 @@ void MainWindow::setupWindowChrome()
             this, [this] { revealPlayerChrome(); });
     connect(m_playerChrome, &IinaPlayerChrome::fullScreenRequested,
             this, &MainWindow::toggleFullScreen);
+    connect(
+        m_playerChrome,
+        &IinaPlayerChrome::pictureInPictureRequested,
+        this, &MainWindow::togglePictureInPicture);
     connect(m_playerChrome, &IinaPlayerChrome::openFileRequested,
             this, &MainWindow::openFiles);
     connect(m_playerChrome, &IinaPlayerChrome::playlistRequested,
@@ -1801,6 +1805,8 @@ void MainWindow::finishEnteringCompactMode()
     const CompactMode mode = m_pendingCompactMode;
     m_pendingCompactMode = CompactMode::Normal;
     m_compactMode = mode;
+    m_playerChrome->setPictureInPicture(
+        mode == CompactMode::PictureInPicture);
     if (m_playlistPanel) {
         m_playlistPanel->hide();
     }
@@ -1851,6 +1857,7 @@ void MainWindow::exitCompactMode()
     const bool restoreMaximized = m_compactRestoreMaximized;
     const QRect restoreGeometry = m_compactRestoreGeometry;
     m_compactMode = CompactMode::Normal;
+    m_playerChrome->setPictureInPicture(false);
     m_pendingCompactMode = CompactMode::Normal;
     m_compactRestoreFullScreen = false;
     m_compactRestoreMaximized = false;

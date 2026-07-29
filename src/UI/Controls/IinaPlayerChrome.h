@@ -25,6 +25,7 @@ enum class IinaIcon {
     Folder,
     Playlist,
     Settings,
+    PictureInPicture,
     FullScreen,
     ExitFullScreen,
 };
@@ -97,6 +98,7 @@ public:
         PlayerCore *playerCore, QWidget *parent = nullptr);
 
     void setFullScreen(bool fullScreen);
+    void setPictureInPicture(bool pictureInPicture);
     void reveal(bool animated = true);
     void conceal(bool animated = true);
     [[nodiscard]] bool isConcealed() const noexcept;
@@ -104,6 +106,7 @@ public:
 signals:
     void activity();
     void fullScreenRequested();
+    void pictureInPictureRequested();
     void openFileRequested();
     void playlistRequested();
     void mediaSettingsRequested();
@@ -132,6 +135,7 @@ private:
     IinaIconButton *m_openFileButton = nullptr;
     IinaIconButton *m_playlistButton = nullptr;
     IinaIconButton *m_settingsButton = nullptr;
+    IinaIconButton *m_pictureInPictureButton = nullptr;
     IinaIconButton *m_fullScreenButton = nullptr;
     QSlider *m_volumeSlider = nullptr;
     IinaTimeline *m_timeline = nullptr;
