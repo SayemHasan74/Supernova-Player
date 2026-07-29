@@ -31,6 +31,8 @@ qt_add_executable(Supernova WIN32
     src/App/MediaSourceResolver.cpp
     src/App/AutomaticFileMatcher.h
     src/App/AutomaticFileMatcher.cpp
+    src/Platform/Windows/WindowsShellIntegration.h
+    src/Platform/Windows/WindowsShellIntegration.cpp
     src/Core/Logger.h
     src/Core/Logger.cpp
     src/Network/NetworkConfiguration.h
@@ -107,7 +109,14 @@ target_link_libraries(Supernova PRIVATE
     Supernova::mpv
 )
 if(WIN32)
-    target_link_libraries(Supernova PRIVATE Advapi32)
+    target_link_libraries(Supernova PRIVATE
+        Advapi32
+        Ole32
+        Propsys
+        RuntimeObject
+        Shell32
+        WindowsApp
+    )
 endif()
 
 target_compile_definitions(Supernova PRIVATE

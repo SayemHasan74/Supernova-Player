@@ -54,6 +54,11 @@ private:
     QCheckBox *m_resumePlayback = nullptr;
     QCheckBox *m_recordRecentMedia = nullptr;
     QCheckBox *m_trackPlaylistFilesAsRecent = nullptr;
+    QCheckBox *m_systemMediaControls = nullptr;
+    QCheckBox *m_preventSleep = nullptr;
+    QCheckBox *m_allowDisplaySleepForAudio = nullptr;
+    QCheckBox *m_jumpList = nullptr;
+    QLabel *m_fileAssociationStatus = nullptr;
     QLabel *m_historyPath = nullptr;
     QCheckBox *m_playlistAutoAdd = nullptr;
     QComboBox *m_subtitleMode = nullptr;

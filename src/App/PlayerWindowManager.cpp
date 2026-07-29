@@ -1,6 +1,7 @@
 #include "App/PlayerWindowManager.h"
 
 #include "App/MediaSourceResolver.h"
+#include "Platform/Windows/WindowsShellIntegration.h"
 #include "PlayerCore/PlayerCore.h"
 #include "UI/MainWindow/MainWindow.h"
 
@@ -20,6 +21,8 @@ struct PlayerWindowManager::Session {
 PlayerWindowManager::PlayerWindowManager(QObject *parent)
     : QObject(parent)
 {
+    m_windowsIntegration =
+        std::make_unique<WindowsShellIntegration>(this);
 }
 
 PlayerWindowManager::~PlayerWindowManager() = default;
@@ -34,6 +37,8 @@ MainWindow *PlayerWindowManager::createPlayer(
     Session *sessionPtr = session.get();
     MainWindow *window = session->window;
     m_sessions.push_back(std::move(session));
+    m_windowsIntegration->registerPlayer(
+        sessionPtr->player.get(), window);
 
     connect(
         window, &MainWindow::renderContextReady,

@@ -2,6 +2,7 @@
 
 #include "PlayerCore/PlayerCore.h"
 #include "Network/SecureCredentialStore.h"
+#include "Platform/Windows/WindowsShellIntegration.h"
 
 #include <QAbstractItemView>
 #include <QCheckBox>
@@ -187,6 +188,87 @@ QWidget *PreferencesDialog::createGeneralPage()
             m_playerCore->clearRecentMedia();
         }
     });
+
+#ifdef Q_OS_WIN
+    layout->addSpacing(10);
+    auto *windowsTitle =
+        new QLabel(tr("Windows integration"), page);
+    windowsTitle->setFont(titleFont);
+    layout->addWidget(windowsTitle);
+
+    m_systemMediaControls = new QCheckBox(
+        tr("Use Windows media controls and media keys"), page);
+    m_systemMediaControls->setChecked(settings.value(
+        QStringLiteral("windows/systemMediaControls"), true).toBool());
+    m_preventSleep = new QCheckBox(
+        tr("Prevent sleep while media is playing"), page);
+    m_preventSleep->setChecked(settings.value(
+        QStringLiteral("windows/preventSleep"), true).toBool());
+    m_allowDisplaySleepForAudio = new QCheckBox(
+        tr("Allow the display to sleep during audio-only playback"), page);
+    m_allowDisplaySleepForAudio->setChecked(settings.value(
+        QStringLiteral("windows/allowDisplaySleepForAudio"), true)
+                                                    .toBool());
+    m_jumpList = new QCheckBox(
+        tr("Show recent media and player tasks in the Jump List"), page);
+    m_jumpList->setChecked(settings.value(
+        QStringLiteral("windows/jumpList"), true).toBool());
+    layout->addWidget(m_systemMediaControls);
+    layout->addWidget(m_preventSleep);
+    layout->addWidget(m_allowDisplaySleepForAudio);
+    layout->addWidget(m_jumpList);
+
+    m_fileAssociationStatus = new QLabel(page);
+    const auto refreshAssociationStatus = [this] {
+        m_fileAssociationStatus->setText(
+            WindowsFileAssociations::isRegistered()
+                ? tr("Supernova is registered as an available media handler.")
+                : tr("Supernova is not registered with Windows file types."));
+    };
+    m_fileAssociationStatus->setStyleSheet(
+        QStringLiteral("color: rgba(235,235,245,160);"));
+    refreshAssociationStatus();
+    layout->addWidget(m_fileAssociationStatus);
+
+    auto *registerAssociations =
+        smallButton(tr("Register File Types"), page);
+    auto *removeAssociations =
+        smallButton(tr("Remove Registration"), page);
+    auto *defaultApps =
+        smallButton(tr("Open Default Apps"), page);
+    auto *associationActions = new QHBoxLayout;
+    associationActions->addWidget(registerAssociations);
+    associationActions->addWidget(removeAssociations);
+    associationActions->addWidget(defaultApps);
+    associationActions->addStretch();
+    layout->addLayout(associationActions);
+    connect(registerAssociations, &QPushButton::clicked,
+            this, [this, refreshAssociationStatus] {
+                QString error;
+                if (!WindowsFileAssociations::registerCurrentExecutable(
+                        &error)) {
+                    QMessageBox::warning(
+                        this, tr("File Associations"), error);
+                    return;
+                }
+                refreshAssociationStatus();
+            });
+    connect(removeAssociations, &QPushButton::clicked,
+            this, [this, refreshAssociationStatus] {
+                QString error;
+                if (!WindowsFileAssociations::unregisterCurrentUser(
+                        &error)) {
+                    QMessageBox::warning(
+                        this, tr("File Associations"), error);
+                    return;
+                }
+                refreshAssociationStatus();
+            });
+    connect(defaultApps, &QPushButton::clicked,
+            this, [] {
+                WindowsFileAssociations::openDefaultAppsSettings();
+            });
+#endif
     layout->addStretch();
     return page;
 }
@@ -1105,6 +1187,20 @@ void PreferencesDialog::applyPreferences()
     settings.setValue(
         QStringLiteral("history/trackPlaylistFilesAsRecent"),
         m_trackPlaylistFilesAsRecent->isChecked());
+#ifdef Q_OS_WIN
+    settings.setValue(
+        QStringLiteral("windows/systemMediaControls"),
+        m_systemMediaControls->isChecked());
+    settings.setValue(
+        QStringLiteral("windows/preventSleep"),
+        m_preventSleep->isChecked());
+    settings.setValue(
+        QStringLiteral("windows/allowDisplaySleepForAudio"),
+        m_allowDisplaySleepForAudio->isChecked());
+    settings.setValue(
+        QStringLiteral("windows/jumpList"),
+        m_jumpList->isChecked());
+#endif
     settings.setValue(
         QStringLiteral("matching/playlistAutoAdd"),
         m_playlistAutoAdd->isChecked());

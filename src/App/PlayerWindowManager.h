@@ -9,6 +9,7 @@
 
 class MainWindow;
 class PlayerCore;
+class WindowsShellIntegration;
 
 class PlayerWindowManager final : public QObject {
     Q_OBJECT
@@ -28,4 +29,5 @@ private:
     void removeSession(MainWindow *window);
 
     std::vector<std::unique_ptr<Session>> m_sessions;
+    std::unique_ptr<WindowsShellIntegration> m_windowsIntegration;
 };
