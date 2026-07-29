@@ -37,6 +37,7 @@ signals:
     void backRequested();
     void closeRequested();
     void playlistRequested();
+    void openFileRequested();
     void fullScreenRequested();
     void minimizeRequested();
     void preferredSizeChanged();
@@ -78,6 +79,7 @@ private:
     IinaIconButton *m_playButton = nullptr;
     IinaIconButton *m_nextButton = nullptr;
     IinaIconButton *m_playlistButton = nullptr;
+    IinaIconButton *m_openFileButton = nullptr;
     IinaIconButton *m_artworkButton = nullptr;
     IinaIconButton *m_shuffleButton = nullptr;
     IinaIconButton *m_repeatButton = nullptr;

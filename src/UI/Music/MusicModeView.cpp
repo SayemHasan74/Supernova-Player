@@ -259,6 +259,8 @@ MusicModeView::MusicModeView(PlayerCore *playerCore, QWidget *parent)
     m_nextButton = new IinaIconButton(IinaIcon::Next, m_controlsView);
     m_playlistButton =
         new IinaIconButton(IinaIcon::Playlist, m_controlsView);
+    m_openFileButton =
+        new IinaIconButton(IinaIcon::Folder, m_controlsView);
     m_artworkButton =
         new IinaIconButton(IinaIcon::FullScreen, m_controlsView);
     m_shuffleButton =
@@ -275,6 +277,7 @@ MusicModeView::MusicModeView(PlayerCore *playerCore, QWidget *parent)
     m_playButton->setToolTip(tr("Play"));
     m_nextButton->setToolTip(tr("Next Media"));
     m_playlistButton->setToolTip(tr("Show Playlist"));
+    m_openFileButton->setToolTip(tr("Open File"));
     m_artworkButton->setToolTip(tr("Enter Full Screen"));
     m_shuffleButton->setToolTip(tr("Shuffle Playlist"));
     m_repeatButton->setToolTip(tr("Change Repeat Mode"));
@@ -343,6 +346,8 @@ MusicModeView::MusicModeView(PlayerCore *playerCore, QWidget *parent)
             this, &MusicModeView::toggleCompactPresentation);
     connect(m_playlistButton, &QAbstractButton::clicked,
             this, &MusicModeView::playlistRequested);
+    connect(m_openFileButton, &QAbstractButton::clicked,
+            this, &MusicModeView::openFileRequested);
     connect(m_artworkButton, &QAbstractButton::clicked,
             this, &MusicModeView::fullScreenRequested);
     connect(m_shuffleButton, &QAbstractButton::clicked,
@@ -715,6 +720,7 @@ void MusicModeView::resizeEvent(QResizeEvent *event)
         m_nextButton->setGeometry(152, 252, 28, 28);
         m_repeatButton->setGeometry(182, 254, 24, 24);
         m_artworkButton->setGeometry(218, 254, 24, 24);
+        m_openFileButton->setGeometry(188, 286, 24, 24);
         m_playlistButton->setGeometry(218, 286, 24, 24);
         m_upNextLabel->setGeometry(20, 294, 190, 22);
         m_upNextLabel->show();
@@ -734,8 +740,10 @@ void MusicModeView::resizeEvent(QResizeEvent *event)
             center + 70, height() - 48, 28, 28);
         m_artworkButton->setGeometry(
             contentWidth - 108, height() - 48, 28, 28);
-        m_playlistButton->setGeometry(
+        m_openFileButton->setGeometry(
             contentWidth - 74, height() - 48, 28, 28);
+        m_playlistButton->setGeometry(
+            contentWidth - 40, height() - 48, 28, 28);
         m_upNextLabel->hide();
     }
 

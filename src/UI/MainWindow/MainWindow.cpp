@@ -1146,6 +1146,8 @@ void MainWindow::setupWindowChrome()
             this, &QWidget::showMinimized);
     connect(m_musicModeView, &MusicModeView::playlistRequested,
             this, &MainWindow::togglePlaylist);
+    connect(m_musicModeView, &MusicModeView::openFileRequested,
+            this, &MainWindow::openFiles);
     connect(m_musicModeView, &MusicModeView::fullScreenRequested,
             this, &MainWindow::toggleFullScreen);
     connect(m_musicModeView, &MusicModeView::preferredSizeChanged,
