@@ -56,6 +56,7 @@ public slots:
     void toggleMediaSettings();
     void toggleMusicMode();
     void togglePictureInPicture();
+    void showPluginOsd(const QString &message);
 
 signals:
     void renderContextReady();

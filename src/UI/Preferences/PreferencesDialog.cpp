@@ -3,6 +3,7 @@
 #include "PlayerCore/PlayerCore.h"
 #include "Network/SecureCredentialStore.h"
 #include "Platform/Windows/WindowsShellIntegration.h"
+#include "UI/Preferences/PluginPreferencesPage.h"
 
 #include <QAbstractItemView>
 #include <QCheckBox>
@@ -80,6 +81,7 @@ PreferencesDialog::PreferencesDialog(
     tabs->addTab(createProfilesPage(), tr("Profiles"));
     tabs->addTab(createKeyBindingsPage(), tr("Key Bindings"));
     tabs->addTab(createAdvancedPage(), tr("Advanced"));
+    tabs->addTab(new PluginPreferencesPage(tabs), tr("Plugins"));
     root->addWidget(tabs, 1);
 
     auto *buttons = new QDialogButtonBox(

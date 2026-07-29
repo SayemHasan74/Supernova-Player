@@ -11,7 +11,8 @@ include(CTest)
 set(SUPERNOVA_CHANNEL "Dev" CACHE STRING "Build channel: Dev, Beta, Nightly, Release")
 set_property(CACHE SUPERNOVA_CHANNEL PROPERTY STRINGS Dev Beta Nightly Release)
 
-find_package(Qt6 6.8 REQUIRED COMPONENTS Core Widgets Gui OpenGLWidgets Network Svg)
+find_package(Qt6 6.8 REQUIRED COMPONENTS
+    Core Widgets Gui OpenGLWidgets Network Svg Qml)
 qt_standard_project_setup()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
@@ -41,6 +42,14 @@ qt_add_executable(Supernova WIN32
     src/Network/SecureCredentialStore.cpp
     src/Network/OnlineSubtitleService.h
     src/Network/OnlineSubtitleService.cpp
+    src/Plugins/PluginManifest.h
+    src/Plugins/PluginManifest.cpp
+    src/Plugins/PluginPackage.h
+    src/Plugins/PluginPackage.cpp
+    src/Plugins/PluginRuntime.h
+    src/Plugins/PluginRuntime.cpp
+    src/Plugins/PluginManager.h
+    src/Plugins/PluginManager.cpp
     src/Preferences/PlayerConfiguration.h
     src/Preferences/PlayerConfiguration.cpp
     src/Mpv/MpvCore.h
@@ -90,6 +99,8 @@ qt_add_executable(Supernova WIN32
     src/UI/Subtitles/OnlineSubtitleDialog.cpp
     src/UI/Preferences/PreferencesDialog.h
     src/UI/Preferences/PreferencesDialog.cpp
+    src/UI/Preferences/PluginPreferencesPage.h
+    src/UI/Preferences/PluginPreferencesPage.cpp
     src/UI/MainWindow/MainWindow.h
     src/UI/MainWindow/MainWindow.cpp
     resources/app.rc
@@ -106,6 +117,7 @@ target_link_libraries(Supernova PRIVATE
     Qt6::OpenGLWidgets
     Qt6::Network
     Qt6::Svg
+    Qt6::Qml
     Supernova::mpv
 )
 if(WIN32)
@@ -488,6 +500,24 @@ if(BUILD_TESTING)
         NAME OnlineSubtitleService
         COMMAND SupernovaOnlineSubtitleServiceTests)
 
+    qt_add_executable(SupernovaPluginManifestTests
+        tests/PluginManifestTests.cpp
+        src/Plugins/PluginManifest.h
+        src/Plugins/PluginManifest.cpp
+        src/Plugins/PluginPackage.h
+        src/Plugins/PluginPackage.cpp
+    )
+    target_include_directories(
+        SupernovaPluginManifestTests PRIVATE src)
+    target_link_libraries(
+        SupernovaPluginManifestTests PRIVATE Qt6::Core Qt6::Test)
+    set_target_properties(
+        SupernovaPluginManifestTests PROPERTIES
+        WIN32_EXECUTABLE FALSE)
+    add_test(
+        NAME PluginManifest
+        COMMAND SupernovaPluginManifestTests)
+
     if(WIN32)
         set_tests_properties(
             MediaSourceResolver MpvCore PlayerCoreLifecycle
@@ -501,6 +531,10 @@ if(BUILD_TESTING)
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
         set_tests_properties(
             OnlineSubtitleService PROPERTIES
+            ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+        set_tests_properties(
+            PluginManifest PROPERTIES
             ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
     endif()

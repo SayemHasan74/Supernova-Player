@@ -2,6 +2,7 @@
 
 #include "App/MediaSourceResolver.h"
 #include "Platform/Windows/WindowsShellIntegration.h"
+#include "Plugins/PluginManager.h"
 #include "PlayerCore/PlayerCore.h"
 #include "UI/MainWindow/MainWindow.h"
 
@@ -39,6 +40,10 @@ MainWindow *PlayerWindowManager::createPlayer(
     m_sessions.push_back(std::move(session));
     m_windowsIntegration->registerPlayer(
         sessionPtr->player.get(), window);
+    if (PluginManager::instance()) {
+        PluginManager::instance()->attachPlayer(
+            sessionPtr->player.get(), window);
+    }
 
     connect(
         window, &MainWindow::renderContextReady,

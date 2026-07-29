@@ -36,6 +36,7 @@
 #include <QKeyEvent>
 #include <QKeySequence>
 #include <QLineEdit>
+#include <QLabel>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
@@ -44,6 +45,7 @@
 #include <QNativeGestureEvent>
 #include <QPainter>
 #include <QPaintEvent>
+#include <QPointer>
 #include <QScreen>
 #include <QSettings>
 #include <QStandardPaths>
@@ -455,6 +457,45 @@ void MainWindow::togglePictureInPicture()
     } else {
         enterCompactMode(CompactMode::PictureInPicture);
     }
+}
+
+void MainWindow::showPluginOsd(const QString &message)
+{
+    if (!m_playbackPage || message.trimmed().isEmpty()) {
+        return;
+    }
+    auto *label = m_playbackPage->findChild<QLabel *>(
+        QStringLiteral("pluginOsd"));
+    if (!label) {
+        label = new QLabel(m_playbackPage);
+        label->setObjectName(QStringLiteral("pluginOsd"));
+        label->setAttribute(Qt::WA_TransparentForMouseEvents);
+        label->setAlignment(Qt::AlignCenter);
+        label->setWordWrap(true);
+        label->setMaximumWidth(520);
+        label->setStyleSheet(QStringLiteral(
+            "QLabel { color: white; background: rgba(20,20,22,205);"
+            " border: 1px solid rgba(255,255,255,35);"
+            " border-radius: 10px; padding: 10px 16px; }"));
+    }
+    label->setText(message);
+    label->adjustSize();
+    label->move(
+        (m_playbackPage->width() - label->width()) / 2,
+        std::max(24, m_playbackPage->height() / 7));
+    label->show();
+    label->raise();
+    const int generation =
+        label->property("osdGeneration").toInt() + 1;
+    label->setProperty("osdGeneration", generation);
+    const QPointer<QLabel> safeLabel(label);
+    QTimer::singleShot(2500, label, [safeLabel, generation] {
+        if (safeLabel
+            && safeLabel->property("osdGeneration").toInt()
+                == generation) {
+            safeLabel->hide();
+        }
+    });
 }
 
 void MainWindow::toggleMediaSettings()

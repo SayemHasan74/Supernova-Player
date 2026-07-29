@@ -4,6 +4,7 @@
 #include "App/PlayerWindowManager.h"
 #include "App/SingleInstanceGuard.h"
 #include "Core/Logger.h"
+#include "Plugins/PluginManager.h"
 
 #include <QCoreApplication>
 #include <QList>
@@ -47,6 +48,7 @@ int main(int argc, char *argv[])
                           QStringLiteral(SUPERNOVA_CHANNEL)));
 
     try {
+        PluginManager plugins;
         PlayerWindowManager players;
 
         QObject::connect(
