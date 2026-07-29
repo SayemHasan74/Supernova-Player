@@ -4,12 +4,12 @@
 #include "PlayerCore/ThumbnailProvider.h"
 
 #include <QAbstractItemView>
+#include <QCoreApplication>
 #include <QFileInfo>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
-#include <QLinearGradient>
 #include <QListWidget>
 #include <QPainter>
 #include <QPainterPath>
@@ -91,35 +91,33 @@ QPixmap previewPixmap(const QImage &image)
 
 class BrandMark final : public QWidget {
 public:
-    using QWidget::QWidget;
+    explicit BrandMark(QWidget *parent = nullptr)
+        : QWidget(parent),
+          m_icon(QStringLiteral(":/icons/supernova.png"))
+    {
+    }
 
 protected:
     void paintEvent(QPaintEvent *) override
     {
         QPainter painter(this);
-        painter.setRenderHint(QPainter::Antialiasing);
-        QLinearGradient gradient(10, 12, width() - 10, height() - 12);
-        gradient.setColorAt(0.0, QColor(52, 102, 255));
-        gradient.setColorAt(0.52, QColor(31, 210, 236));
-        gradient.setColorAt(1.0, QColor(29, 139, 255));
-        QPainterPath triangle;
-        triangle.moveTo(width() * 0.32, height() * 0.20);
-        triangle.lineTo(width() * 0.78, height() * 0.50);
-        triangle.lineTo(width() * 0.32, height() * 0.80);
-        triangle.closeSubpath();
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(gradient);
-        painter.drawPath(triangle);
-        painter.setBrush(QColor(79, 55, 255, 210));
-        painter.drawRoundedRect(
-            QRectF(width() * 0.14, height() * 0.36,
-                   width() * 0.08, height() * 0.28),
-            3, 3);
-        painter.drawRoundedRect(
-            QRectF(width() * 0.24, height() * 0.29,
-                   width() * 0.07, height() * 0.42),
-            3, 3);
+        painter.setRenderHints(
+            QPainter::Antialiasing
+            | QPainter::SmoothPixmapTransform);
+        QPainterPath clip;
+        clip.addRoundedRect(rect(), 12, 12);
+        painter.setClipPath(clip);
+        if (!m_icon.isNull()) {
+            painter.drawImage(
+                rect(),
+                m_icon.scaled(
+                    size(), Qt::KeepAspectRatioByExpanding,
+                    Qt::SmoothTransformation));
+        }
     }
+
+private:
+    QImage m_icon;
 };
 
 class RecentRow final : public QWidget {
@@ -222,7 +220,8 @@ WelcomeView::WelcomeView(QWidget *parent)
     nameFont.setWeight(QFont::DemiBold);
     name->setFont(nameFont);
     name->setStyleSheet(QStringLiteral("color: rgb(242,242,247);"));
-    auto *version = new QLabel(QStringLiteral("0.1.0"), brand);
+    auto *version = new QLabel(
+        QCoreApplication::applicationVersion(), brand);
     version->setAlignment(Qt::AlignCenter);
     version->setStyleSheet(
         QStringLiteral("color: rgba(235,235,245,150);"));

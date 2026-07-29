@@ -14,6 +14,7 @@ set_property(CACHE SUPERNOVA_CHANNEL PROPERTY STRINGS Dev Beta Nightly Release)
 find_package(Qt6 6.8 REQUIRED COMPONENTS
     Core Widgets Gui OpenGLWidgets Network Svg Qml)
 qt_standard_project_setup()
+set(CMAKE_AUTORCC ON)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(FindMPV)

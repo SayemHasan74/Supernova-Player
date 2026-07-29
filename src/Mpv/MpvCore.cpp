@@ -553,7 +553,10 @@ MpvCore::MpvCore(QObject *parent)
         observe(QStringLiteral("vid"), MPV_FORMAT_INT64);
         observe(QStringLiteral("aid"), MPV_FORMAT_INT64);
         observe(QStringLiteral("sid"), MPV_FORMAT_INT64);
-        observe(QStringLiteral("secondary-sid"), MPV_FORMAT_INT64);
+        // mpv exposes secondary-sid as a string because "no" is a valid
+        // value. Observing it as INT64 makes qwindows builds report a
+        // property-format error during an otherwise successful startup.
+        observe(QStringLiteral("secondary-sid"), MPV_FORMAT_STRING);
         observe(QStringLiteral("sub-visibility"), MPV_FORMAT_FLAG);
         observe(
             QStringLiteral("secondary-sub-visibility"),
@@ -834,7 +837,8 @@ qint64 MpvCore::getInt(const QString &name) const
     const QByteArray encodedName = name.toUtf8();
     const int result = mpv_get_property(
         m_mpv, encodedName.constData(), MPV_FORMAT_INT64, &value);
-    if (result < 0) {
+    if (result < 0
+        && result != MPV_ERROR_PROPERTY_UNAVAILABLE) {
         const_cast<MpvCore *>(this)->reportError(
             QStringLiteral("Getting property '%1'").arg(name),
             result, true);
@@ -852,7 +856,8 @@ double MpvCore::getDouble(const QString &name) const
     const QByteArray encodedName = name.toUtf8();
     const int result = mpv_get_property(
         m_mpv, encodedName.constData(), MPV_FORMAT_DOUBLE, &value);
-    if (result < 0) {
+    if (result < 0
+        && result != MPV_ERROR_PROPERTY_UNAVAILABLE) {
         const_cast<MpvCore *>(this)->reportError(
             QStringLiteral("Getting property '%1'").arg(name),
             result, true);
@@ -870,7 +875,8 @@ bool MpvCore::getFlag(const QString &name) const
     const QByteArray encodedName = name.toUtf8();
     const int result = mpv_get_property(
         m_mpv, encodedName.constData(), MPV_FORMAT_FLAG, &value);
-    if (result < 0) {
+    if (result < 0
+        && result != MPV_ERROR_PROPERTY_UNAVAILABLE) {
         const_cast<MpvCore *>(this)->reportError(
             QStringLiteral("Getting property '%1'").arg(name),
             result, true);
@@ -888,7 +894,8 @@ QString MpvCore::getString(const QString &name) const
     const QByteArray encodedName = name.toUtf8();
     const int result = mpv_get_property(
         m_mpv, encodedName.constData(), MPV_FORMAT_STRING, &value);
-    if (result < 0) {
+    if (result < 0
+        && result != MPV_ERROR_PROPERTY_UNAVAILABLE) {
         const_cast<MpvCore *>(this)->reportError(
             QStringLiteral("Getting property '%1'").arg(name),
             result, true);

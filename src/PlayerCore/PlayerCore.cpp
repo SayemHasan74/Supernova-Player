@@ -913,10 +913,14 @@ void PlayerCore::setSubtitleTrack(bool primary, int id)
     if (!isLoaded(m_info.state)) {
         return;
     }
-    m_mpv->setInt(
-        primary ? QStringLiteral("sid")
-                : QStringLiteral("secondary-sid"),
-        std::max(0, id));
+    if (primary) {
+        m_mpv->setInt(
+            QStringLiteral("sid"), std::max(0, id));
+    } else {
+        m_mpv->setString(
+            QStringLiteral("secondary-sid"),
+            id > 0 ? QString::number(id) : QStringLiteral("no"));
+    }
 }
 
 void PlayerCore::runExternalTrackCommand(
@@ -2090,9 +2094,13 @@ void PlayerCore::synchronizeTracks(const QVariant &trackList)
         static_cast<int>(m_mpv->getInt(QStringLiteral("aid")));
     updated.selectedSubtitleId =
         static_cast<int>(m_mpv->getInt(QStringLiteral("sid")));
+    const QString secondarySid =
+        m_mpv->getString(QStringLiteral("secondary-sid"));
+    bool secondarySidIsNumber = false;
+    const int secondarySidValue =
+        secondarySid.toInt(&secondarySidIsNumber);
     updated.selectedSecondarySubtitleId =
-        static_cast<int>(
-            m_mpv->getInt(QStringLiteral("secondary-sid")));
+        secondarySidIsNumber ? secondarySidValue : 0;
     if (updated == m_info.tracks) {
         return;
     }
