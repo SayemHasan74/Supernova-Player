@@ -308,6 +308,7 @@ public:
         HICON pauseIcon = nullptr;
         HICON nextIcon = nullptr;
         bool taskbarError = false;
+        quint64 artworkGeneration = 0;
 #endif
     };
 
@@ -760,6 +761,7 @@ private:
             session.controls.IsEnabled(
                 systemMediaControlsEnabled() && active);
             if (!systemMediaControlsEnabled() || !active) {
+                ++session.artworkGeneration;
                 session.controls.PlaybackStatus(
                     wm::MediaPlaybackStatus::Closed);
                 session.controls.DisplayUpdater().ClearAll();
@@ -798,6 +800,8 @@ private:
             session.controls.UpdateTimelineProperties(timeline);
 
             if (updateMetadata) {
+                const quint64 artworkGeneration =
+                    ++session.artworkGeneration;
                 auto updater = session.controls.DisplayUpdater();
                 updater.ClearAll();
                 const bool audioOnly =
@@ -826,33 +830,60 @@ private:
                 }
                 const QImage artwork =
                     session.player->thumbnailAt(0.0);
+                updater.Update();
                 if (!artwork.isNull()) {
                     QByteArray bytes;
                     QBuffer buffer(&bytes);
                     if (buffer.open(QIODevice::WriteOnly)
                         && artwork.save(&buffer, "PNG")) {
-                        ws::InMemoryRandomAccessStream stream;
-                        ws::DataWriter writer(stream);
-                        writer.WriteBytes(winrt::array_view<const uint8_t>(
-                            reinterpret_cast<const uint8_t *>(
-                                bytes.constData()),
-                            reinterpret_cast<const uint8_t *>(
-                                bytes.constData() + bytes.size())));
-                        writer.StoreAsync().get();
-                        writer.DetachStream();
-                        stream.Seek(0);
-                        updater.Thumbnail(
-                            ws::RandomAccessStreamReference::CreateFromStream(
-                                stream));
+                        updateArtworkAsync(
+                            &session, artworkGeneration,
+                            std::move(bytes));
                     }
                 }
-                updater.Update();
             }
         } catch (const winrt::hresult_error &error) {
             Logger::warn(QStringLiteral(
                 "Could not update Windows media session: 0x%1")
                 .arg(static_cast<quint32>(error.code()), 8, 16,
                      QLatin1Char('0')));
+        }
+    }
+
+    winrt::fire_and_forget updateArtworkAsync(
+        Session *session, quint64 generation, QByteArray bytes)
+    {
+        QPointer<Implementation> guarded(this);
+        try {
+            ws::InMemoryRandomAccessStream stream;
+            ws::DataWriter writer(stream);
+            writer.WriteBytes(winrt::array_view<const uint8_t>(
+                reinterpret_cast<const uint8_t *>(bytes.constData()),
+                reinterpret_cast<const uint8_t *>(
+                    bytes.constData() + bytes.size())));
+            co_await writer.StoreAsync();
+            writer.DetachStream();
+            stream.Seek(0);
+            const auto reference =
+                ws::RandomAccessStreamReference::CreateFromStream(
+                    stream);
+            if (!guarded || !guarded->contains(session)
+                || guarded->m_active != session
+                || session->artworkGeneration != generation
+                || !session->controls
+                || !systemMediaControlsEnabled()) {
+                co_return;
+            }
+            auto updater = session->controls.DisplayUpdater();
+            updater.Thumbnail(reference);
+            updater.Update();
+        } catch (const winrt::hresult_error &error) {
+            if (guarded) {
+                Logger::warn(QStringLiteral(
+                    "Could not update Windows media artwork: 0x%1")
+                    .arg(static_cast<quint32>(error.code()), 8, 16,
+                         QLatin1Char('0')));
+            }
         }
     }
 
