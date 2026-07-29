@@ -114,6 +114,21 @@ public:
         }
     }
 
+    void setAccentColor(const QColor &color)
+    {
+        const QColor accent = color.isValid()
+            ? color : QColor(67, 137, 225);
+        m_pointer->setStyleSheet(QStringLiteral(
+            "color: rgb(%1,%2,%3);")
+            .arg(accent.red()).arg(accent.green()).arg(accent.blue()));
+        m_progress->setStyleSheet(QStringLiteral(
+            "QProgressBar { border: 0; background: rgba(255,255,255,22);"
+            " border-radius: 1px; }"
+            "QProgressBar::chunk { background: rgb(%1,%2,%3);"
+            " border-radius: 1px; }")
+            .arg(accent.red()).arg(accent.green()).arg(accent.blue()));
+    }
+
 private:
     QLabel *m_pointer = nullptr;
     QLabel *m_title = nullptr;
@@ -194,6 +209,9 @@ PlaylistPanel::PlaylistPanel(QWidget *parent)
     setStyleSheet(QStringLiteral(
         "#playlistPanel { background: rgba(25,25,28,246);"
         " border-left: 1px solid rgba(255,255,255,35); }"
+        "#playlistPanel[musicPresentation=\"true\"] {"
+        " background: rgba(31,31,33,226);"
+        " border-left: 1px solid rgba(255,255,255,28); }"
         "QLabel { color: rgb(240,240,244); }"
         "QListWidget { background: transparent; color: rgb(238,238,242);"
         " border: 0; outline: 0; padding: 3px; }"
@@ -209,27 +227,30 @@ PlaylistPanel::PlaylistPanel(QWidget *parent)
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(10, 9, 10, 9);
     layout->setSpacing(7);
-    auto *header = new QHBoxLayout;
-    auto *title = new QLabel(tr("Playlist"), this);
+    m_headerView = new QWidget(this);
+    auto *header = new QHBoxLayout(m_headerView);
+    header->setContentsMargins(0, 0, 0, 0);
+    header->setSpacing(3);
+    auto *title = new QLabel(tr("Playlist"), m_headerView);
     QFont titleFont = title->font();
     titleFont.setPixelSize(14);
     titleFont.setWeight(QFont::DemiBold);
     title->setFont(titleFont);
     header->addWidget(title);
     auto *playlistTab = toolButton(
-        QStringLiteral("☷"), tr("Playlist"), this);
+        QStringLiteral("☷"), tr("Playlist"), m_headerView);
     auto *chaptersTab = toolButton(
-        QStringLiteral("≡"), tr("Chapters"), this);
+        QStringLiteral("≡"), tr("Chapters"), m_headerView);
     auto *historyTab = toolButton(
-        QStringLiteral("◷"), tr("History"), this);
+        QStringLiteral("◷"), tr("History"), m_headerView);
     header->addWidget(playlistTab);
     header->addWidget(chaptersTab);
     header->addWidget(historyTab);
     header->addStretch();
     auto *closeButton = toolButton(
-        QStringLiteral("×"), tr("Close Playlist"), this);
+        QStringLiteral("×"), tr("Close Playlist"), m_headerView);
     header->addWidget(closeButton);
-    layout->addLayout(header);
+    layout->addWidget(m_headerView);
 
     auto *list = new PlaylistList(this);
     m_list = list;
@@ -408,6 +429,34 @@ PlaylistPanel::PlaylistPanel(QWidget *parent)
     hide();
 }
 
+void PlaylistPanel::setMusicPresentation(bool enabled)
+{
+    if (m_headerView) {
+        m_headerView->setVisible(!enabled);
+    }
+    setMinimumWidth(enabled ? 0 : 305);
+    setProperty("musicPresentation", enabled);
+    style()->unpolish(this);
+    style()->polish(this);
+}
+
+void PlaylistPanel::setAccentColor(const QColor &color)
+{
+    m_accentColor = color.isValid() ? color : QColor(67, 137, 225);
+    m_list->setStyleSheet(QStringLiteral(
+        "QListWidget::item:selected {"
+        " background: rgba(%1,%2,%3,128); border-radius: 5px; }")
+        .arg(m_accentColor.red())
+        .arg(m_accentColor.green())
+        .arg(m_accentColor.blue()));
+    for (int index = 0; index < m_list->count(); ++index) {
+        if (auto *row = dynamic_cast<PlaylistRow *>(
+                m_list->itemWidget(m_list->item(index)))) {
+            row->setAccentColor(m_accentColor);
+        }
+    }
+}
+
 void PlaylistPanel::setPlaylist(const PlaylistState &playlist)
 {
     QList<qint64> selectedIds;
@@ -427,6 +476,7 @@ void PlaylistPanel::setPlaylist(const PlaylistState &playlist)
             ? std::max(m_currentDuration, entry.historyDurationSec)
             : entry.historyDurationSec;
         row->setEntry(entry, position, duration);
+        row->setAccentColor(m_accentColor);
         m_list->setItemWidget(item, row);
         item->setSelected(selectedIds.contains(entry.id));
     }

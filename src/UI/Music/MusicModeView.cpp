@@ -461,6 +461,8 @@ void MusicModeView::attachPlaylistPanel(PlaylistPanel *panel)
     m_playlistPanel = panel;
     if (m_playlistPanel) {
         const int panelWidth = std::min(playlistWidth, width());
+        m_playlistPanel->setMusicPresentation(true);
+        m_playlistPanel->setAccentColor(coverPalette(m_artwork).first);
         m_playlistPanel->setParent(this);
         m_playlistPanel->hide();
         m_playlistPanel->setGeometry(
@@ -474,6 +476,7 @@ void MusicModeView::detachPlaylistPanel(QWidget *newParent)
         return;
     }
     m_playlistPanel->hide();
+    m_playlistPanel->setMusicPresentation(false);
     m_playlistPanel->setParent(newParent);
     m_playlistPanel = nullptr;
     m_showPlaylist = false;
@@ -611,11 +614,18 @@ void MusicModeView::paintEvent(QPaintEvent *event)
     if (!m_artwork.isNull()) {
         painter.setOpacity(m_compactPresentation && !m_fullScreen
                                ? 0.12 : 0.22);
-        painter.drawImage(
-            baseRect,
+        const QSize blurSampleSize(
+            std::max(10, width() / 48),
+            std::max(8, height() / 48));
+        const QImage blurredArtwork =
             m_artwork.scaled(
-                baseRect.size(), Qt::KeepAspectRatioByExpanding,
-                Qt::SmoothTransformation));
+                blurSampleSize, Qt::KeepAspectRatioByExpanding,
+                Qt::SmoothTransformation)
+                .scaled(
+                    baseRect.size(), Qt::KeepAspectRatioByExpanding,
+                    Qt::SmoothTransformation);
+        painter.drawImage(
+            baseRect, blurredArtwork);
         painter.setOpacity(1.0);
         painter.fillRect(baseRect, QColor(10, 11, 16, 62));
     }
@@ -643,11 +653,19 @@ void MusicModeView::paintEvent(QPaintEvent *event)
             (contentWidth - artSize) / 2,
             artTop, artSize, artSize);
         if (!m_artwork.isNull()) {
+            painter.save();
+            QPainterPath artworkPath;
+            artworkPath.addRoundedRect(artRect, 8, 8);
+            painter.setClipPath(artworkPath, Qt::IntersectClip);
             painter.drawImage(
                 artRect,
                 m_artwork.scaled(
                     artRect.size(), Qt::KeepAspectRatioByExpanding,
                     Qt::SmoothTransformation));
+            painter.restore();
+            painter.setPen(QPen(QColor(255, 255, 255, 34), 1));
+            painter.setBrush(Qt::NoBrush);
+            painter.drawRoundedRect(artRect, 8, 8);
         } else {
             QLinearGradient gradient(0, 0, artRect.width(), artRect.height());
             gradient.setColorAt(0.0, QColor(13, 20, 38));
@@ -745,6 +763,9 @@ void MusicModeView::resizeEvent(QResizeEvent *event)
     m_backButton->hide();
     const int center = contentWidth / 2;
     if (compact) {
+        m_shuffleButton->show();
+        m_repeatButton->show();
+        m_artworkButton->show();
         m_volumeButton->setGeometry(10, 256, 24, 24);
         m_volumeSlider->hide();
         m_shuffleButton->setGeometry(48, 254, 24, 24);
@@ -761,20 +782,17 @@ void MusicModeView::resizeEvent(QResizeEvent *event)
         m_volumeButton->setGeometry(12, height() - 36, 26, 26);
         m_volumeSlider->setGeometry(42, height() - 28, 68, 16);
         m_volumeSlider->show();
-        m_shuffleButton->setGeometry(
-            center - 92, height() - 35, 28, 28);
+        m_shuffleButton->hide();
         m_previousButton->setGeometry(
-            center - 58, height() - 37, 30, 30);
+            center - 54, height() - 37, 30, 30);
         m_playButton->setGeometry(
             center - 18, height() - 42, 38, 38);
         m_nextButton->setGeometry(
-            center + 27, height() - 37, 30, 30);
-        m_repeatButton->setGeometry(
-            center + 61, height() - 35, 28, 28);
+            center + 24, height() - 37, 30, 30);
+        m_repeatButton->hide();
         m_compactButton->setGeometry(
-            contentWidth - 142, height() - 35, 28, 28);
-        m_artworkButton->setGeometry(
             contentWidth - 108, height() - 35, 28, 28);
+        m_artworkButton->hide();
         m_openFileButton->setGeometry(
             contentWidth - 74, height() - 35, 28, 28);
         m_playlistButton->setGeometry(
@@ -795,7 +813,9 @@ void MusicModeView::resizeEvent(QResizeEvent *event)
             ? std::max(0, baseMusicWidth - playlistOverlap)
             : width() - panelWidth;
         const int panelHeight =
-            !compact && !m_fullScreen
+            compact
+            ? std::max(1, height() - 48)
+            : !m_fullScreen
             ? std::max(1, height() - normalControlsHeight)
             : height();
         m_playlistPanel->setGeometry(
@@ -852,6 +872,20 @@ void MusicModeView::toggleCompactPresentation()
 void MusicModeView::updateMetadata()
 {
     m_artwork = embeddedMp3Artwork(m_playerCore->info().currentUrl);
+    const auto [accent, background] = coverPalette(m_artwork);
+    Q_UNUSED(background)
+    m_timeline->setAccentColor(accent);
+    if (m_playlistPanel) {
+        m_playlistPanel->setAccentColor(accent);
+    }
+    m_volumeSlider->setStyleSheet(QStringLiteral(
+        "QSlider::groove:horizontal { height: 3px;"
+        " background: rgba(235,235,245,62); border-radius: 1px; }"
+        "QSlider::sub-page:horizontal {"
+        " background: rgb(%1,%2,%3); border-radius: 1px; }"
+        "QSlider::handle:horizontal { width: 10px; margin: -4px 0;"
+        " border-radius: 5px; background: rgb(250,250,252); }")
+        .arg(accent.red()).arg(accent.green()).arg(accent.blue()));
     update();
     QString title =
         m_playerCore->mpvPropertyString(QStringLiteral("media-title"));

@@ -7,6 +7,7 @@
 #include <QList>
 #include <QHash>
 #include <QPair>
+#include <QColor>
 #include <QUrl>
 #include <QWidget>
 
@@ -20,6 +21,8 @@ class PlaylistPanel final : public QWidget {
 public:
     explicit PlaylistPanel(QWidget *parent = nullptr);
 
+    void setMusicPresentation(bool enabled);
+    void setAccentColor(const QColor &color);
     void setPlaylist(const PlaylistState &playlist);
     void setPlaybackPosition(double seconds);
     void setPlaybackDuration(double seconds);
@@ -56,6 +59,7 @@ private:
     QListWidget *m_list = nullptr;
     QListWidget *m_chapterList = nullptr;
     QListWidget *m_historyList = nullptr;
+    QWidget *m_headerView = nullptr;
     QWidget *m_playlistFooter = nullptr;
     QLabel *m_summary = nullptr;
     QPushButton *m_loopButton = nullptr;
@@ -67,4 +71,5 @@ private:
     QList<PlaybackHistoryEntry> m_history;
     QList<PlaybackChapter> m_chapters;
     int m_currentChapter = -1;
+    QColor m_accentColor;
 };

@@ -310,7 +310,7 @@ void IinaIconButton::paintEvent(QPaintEvent *event)
 }
 
 IinaTimeline::IinaTimeline(QWidget *parent)
-    : QWidget(parent)
+    : QWidget(parent), m_accentColor(sliderPlayed)
 {
     setCursor(Qt::PointingHandCursor);
     setMouseTracking(true);
@@ -351,6 +351,12 @@ void IinaTimeline::setChapters(
 void IinaTimeline::setAbLoop(const AbLoopState &state)
 {
     m_abLoop = state;
+    update();
+}
+
+void IinaTimeline::setAccentColor(const QColor &color)
+{
+    m_accentColor = color.isValid() ? color : sliderPlayed;
     update();
 }
 
@@ -436,7 +442,7 @@ void IinaTimeline::paintEvent(QPaintEvent *event)
     }
     QRectF played = track;
     played.setWidth(track.width() * ratio);
-    painter.setBrush(sliderPlayed);
+    painter.setBrush(m_accentColor);
     painter.drawRoundedRect(played, 1.5, 1.5);
 
     if (m_duration > 0.0) {

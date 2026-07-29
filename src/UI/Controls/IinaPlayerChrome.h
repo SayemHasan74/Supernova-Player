@@ -4,6 +4,7 @@
 #include "PlayerCore/NavigationState.h"
 
 #include <QAbstractButton>
+#include <QColor>
 #include <QPoint>
 #include <QWidget>
 
@@ -63,6 +64,7 @@ public:
     void setSeeking(bool seeking);
     void setChapters(const QList<PlaybackChapter> &chapters);
     void setAbLoop(const AbLoopState &state);
+    void setAccentColor(const QColor &color);
 
 signals:
     void seekRequested(double percent);
@@ -94,6 +96,7 @@ private:
     bool m_seeking = false;
     QList<PlaybackChapter> m_chapters;
     AbLoopState m_abLoop;
+    QColor m_accentColor;
 };
 
 class IinaPlayerChrome final : public QWidget {
