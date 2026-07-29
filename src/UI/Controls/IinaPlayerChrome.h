@@ -33,6 +33,7 @@ enum class IinaIcon {
     AlbumArt,
     Shuffle,
     Repeat,
+    Minimize,
 };
 
 class IinaIconButton final : public QAbstractButton {

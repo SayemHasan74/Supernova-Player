@@ -32,8 +32,66 @@
 namespace {
 constexpr int baseMusicWidth = 688;
 constexpr int baseMusicHeight = 520;
+constexpr int compactMusicWidth = 260;
+constexpr int compactMusicHeight = 330;
 constexpr int playlistWidth = 300;
 constexpr int hoverFadeMs = 200;
+
+QColor mixColor(const QColor &first, const QColor &second, double amount)
+{
+    const double t = std::clamp(amount, 0.0, 1.0);
+    return QColor(
+        qRound(first.red() * (1.0 - t) + second.red() * t),
+        qRound(first.green() * (1.0 - t) + second.green() * t),
+        qRound(first.blue() * (1.0 - t) + second.blue() * t));
+}
+
+QPair<QColor, QColor> coverPalette(const QImage &artwork)
+{
+    if (artwork.isNull()) {
+        return {QColor(72, 46, 92), QColor(20, 92, 104)};
+    }
+    const QImage sample = artwork.scaled(
+        24, 24, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+        .convertToFormat(QImage::Format_RGB32);
+    auto colorForRows = [&sample](int firstRow, int lastRow) {
+        qint64 red = 0;
+        qint64 green = 0;
+        qint64 blue = 0;
+        int count = 0;
+        QColor accent;
+        double accentScore = -1.0;
+        for (int y = firstRow; y < lastRow; ++y) {
+            for (int x = 0; x < sample.width(); ++x) {
+                const QColor color = sample.pixelColor(x, y);
+                red += color.red();
+                green += color.green();
+                blue += color.blue();
+                ++count;
+                const double score =
+                    color.hslSaturationF()
+                    * (0.35 + color.lightnessF());
+                if (score > accentScore) {
+                    accentScore = score;
+                    accent = color;
+                }
+            }
+        }
+        const QColor average(
+            int(red / std::max(1, count)),
+            int(green / std::max(1, count)),
+            int(blue / std::max(1, count)));
+        return accentScore > 0.12
+            ? mixColor(average, accent, 0.58)
+            : average;
+    };
+    QColor top = colorForRows(0, sample.height() / 2);
+    QColor bottom =
+        colorForRows(sample.height() / 2, sample.height());
+    top = mixColor(top, QColor(255, 255, 255), 0.12);
+    bottom = mixColor(bottom, QColor(8, 10, 16), 0.42);
+    return {top, bottom};
+}
 
 quint32 synchsafe(const uchar *value)
 {
@@ -168,7 +226,7 @@ MusicModeView::MusicModeView(PlayerCore *playerCore, QWidget *parent)
     setAttribute(Qt::WA_TranslucentBackground);
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
-    setMinimumWidth(baseMusicWidth);
+    setMinimumSize(0, 0);
 
     m_infoView = new QWidget(this);
     m_infoView->setAttribute(Qt::WA_TransparentForMouseEvents);
@@ -188,6 +246,10 @@ MusicModeView::MusicModeView(PlayerCore *playerCore, QWidget *parent)
     m_controlsView = new QWidget(this);
     m_controlsView->setMouseTracking(true);
     m_closeButton = new IinaIconButton(IinaIcon::Close, m_controlsView);
+    m_minimizeButton =
+        new IinaIconButton(IinaIcon::Minimize, m_controlsView);
+    m_compactButton =
+        new IinaIconButton(IinaIcon::PictureInPicture, m_controlsView);
     m_backButton = new IinaIconButton(IinaIcon::Back, m_controlsView);
     m_volumeButton =
         new IinaIconButton(IinaIcon::VolumeHigh, m_controlsView);
@@ -205,6 +267,8 @@ MusicModeView::MusicModeView(PlayerCore *playerCore, QWidget *parent)
         new IinaIconButton(IinaIcon::Repeat, m_controlsView);
 
     m_closeButton->setToolTip(tr("Close Player"));
+    m_minimizeButton->setToolTip(tr("Minimize"));
+    m_compactButton->setToolTip(tr("Enter Compact Music Mode"));
     m_backButton->hide();
     m_volumeButton->setToolTip(tr("Volume"));
     m_previousButton->setToolTip(tr("Previous Media"));
@@ -214,6 +278,11 @@ MusicModeView::MusicModeView(PlayerCore *playerCore, QWidget *parent)
     m_artworkButton->setToolTip(tr("Enter Full Screen"));
     m_shuffleButton->setToolTip(tr("Shuffle Playlist"));
     m_repeatButton->setToolTip(tr("Change Repeat Mode"));
+
+    m_upNextLabel = new QLabel(this);
+    styleMetadataLabel(
+        m_upNextLabel, 10, QColor(245, 245, 247, 185));
+    m_upNextLabel->setTextFormat(Qt::PlainText);
 
     m_elapsedLabel = new QLabel(QStringLiteral("0:00"), this);
     m_durationLabel = new QLabel(QStringLiteral("0:00"), this);
@@ -268,6 +337,10 @@ MusicModeView::MusicModeView(PlayerCore *playerCore, QWidget *parent)
 
     connect(m_closeButton, &QAbstractButton::clicked,
             this, &MusicModeView::closeRequested);
+    connect(m_minimizeButton, &QAbstractButton::clicked,
+            this, &MusicModeView::minimizeRequested);
+    connect(m_compactButton, &QAbstractButton::clicked,
+            this, &MusicModeView::toggleCompactPresentation);
     connect(m_playlistButton, &QAbstractButton::clicked,
             this, &MusicModeView::playlistRequested);
     connect(m_artworkButton, &QAbstractButton::clicked,
@@ -321,6 +394,8 @@ MusicModeView::MusicModeView(PlayerCore *playerCore, QWidget *parent)
             this, [this] { refresh(); });
     connect(m_playerCore, &PlayerCore::currentUrlChanged,
             this, [this] { updateMetadata(); });
+    connect(m_playerCore, &PlayerCore::playlistChanged,
+            this, [this] { updateUpNext(); });
     connect(m_playerCore, &PlayerCore::chapterChanged,
             this, [this] { updateMetadata(); });
     connect(m_playerCore, &PlayerCore::positionChanged,
@@ -419,17 +494,21 @@ bool MusicModeView::isArtworkVisible() const noexcept
 
 QSize MusicModeView::preferredSize() const
 {
-    return QSize(baseMusicWidth, baseMusicHeight);
+    return m_compactPresentation
+        ? QSize(compactMusicWidth, compactMusicHeight)
+        : QSize(baseMusicWidth, baseMusicHeight);
 }
 
 void MusicModeView::setFullScreen(bool fullScreen)
 {
+    m_fullScreen = fullScreen;
     m_artworkButton->setIconType(
         fullScreen ? IinaIcon::ExitFullScreen
                    : IinaIcon::FullScreen);
     m_artworkButton->setToolTip(
         fullScreen ? tr("Exit Full Screen")
                    : tr("Enter Full Screen"));
+    resizeEvent(nullptr);
 }
 
 bool MusicModeView::isInteractiveAt(const QPoint &globalPosition) const
@@ -469,6 +548,7 @@ void MusicModeView::refresh()
     updateVolume(
         m_playerCore->info().volume, m_playerCore->info().isMuted);
     updateMetadata();
+    updateUpNext();
     updatePlaybackState();
     updateTimeLabels();
 }
@@ -496,32 +576,41 @@ void MusicModeView::paintEvent(QPaintEvent *event)
     QPainterPath windowPath;
     windowPath.addRoundedRect(rect().adjusted(1, 1, -1, -1), 8, 8);
     painter.setClipPath(windowPath);
-    painter.fillRect(rect(), QColor(18, 18, 20, 246));
+    const auto [coverTop, coverBottom] = coverPalette(m_artwork);
+    QLinearGradient coverGradient(0, 0, 0, height());
+    coverGradient.setColorAt(
+        0.0, mixColor(coverTop, QColor(18, 18, 22), 0.30));
+    coverGradient.setColorAt(
+        1.0, mixColor(coverBottom, QColor(9, 11, 16), 0.24));
+    painter.fillRect(rect(), coverGradient);
 
     const QRect baseRect = rect();
     if (!m_artwork.isNull()) {
-        painter.setOpacity(0.22);
+        painter.setOpacity(m_compactPresentation && !m_fullScreen
+                               ? 0.10 : 0.18);
         painter.drawImage(
             baseRect,
             m_artwork.scaled(
                 baseRect.size(), Qt::KeepAspectRatioByExpanding,
                 Qt::SmoothTransformation));
         painter.setOpacity(1.0);
-        painter.fillRect(baseRect, QColor(15, 13, 19, 142));
+        painter.fillRect(baseRect, QColor(10, 11, 16, 92));
     }
     if (m_showArtwork) {
-        const int contentWidth =
-            m_showPlaylist ? std::max(300, width() - playlistWidth)
-                           : width();
-        const int artSize =
-            width() <= baseMusicWidth && height() <= baseMusicHeight
+        const int contentWidth = width();
+        const bool compact =
+            m_compactPresentation && !m_fullScreen;
+        const int artSize = compact
+            ? 112
+            : width() <= baseMusicWidth && height() <= baseMusicHeight
             ? 220
             : std::clamp(
                   std::min(contentWidth * 36 / 100,
                            height() * 46 / 100),
                   220, 420);
-        const int artTop =
-            std::max(42, (height() - artSize - 205) / 2);
+        const int artTop = compact
+            ? 42
+            : std::max(42, (height() - artSize - 205) / 2);
         const QRect artRect(
             (contentWidth - artSize) / 2,
             artTop, artSize, artSize);
@@ -562,8 +651,11 @@ void MusicModeView::paintEvent(QPaintEvent *event)
         }
     }
 
+    const bool compactControls =
+        m_compactPresentation && !m_fullScreen;
     const QRect controlsRect(
-        0, height() - 58, width(), 58);
+        0, compactControls ? 240 : height() - 58,
+        width(), compactControls ? height() - 240 : 58);
     painter.fillRect(controlsRect, QColor(18, 18, 21, 115));
     painter.setPen(QColor(255, 255, 255, 32));
     painter.drawLine(
@@ -579,49 +671,75 @@ void MusicModeView::resizeEvent(QResizeEvent *event)
     if (event) {
         QWidget::resizeEvent(event);
     }
-    const int contentWidth =
-        m_showPlaylist ? std::max(300, width() - playlistWidth)
-                       : width();
-    const int artSize =
-        width() <= baseMusicWidth && height() <= baseMusicHeight
+    const bool compact = m_compactPresentation && !m_fullScreen;
+    const int contentWidth = width();
+    const int artSize = compact
+        ? 112
+        : width() <= baseMusicWidth && height() <= baseMusicHeight
         ? 220
         : std::clamp(
               std::min(contentWidth * 36 / 100,
                        height() * 46 / 100),
               220, 420);
-    const int artTop =
-        std::max(42, (height() - artSize - 205) / 2);
+    const int artTop = compact
+        ? 42
+        : std::max(42, (height() - artSize - 205) / 2);
     const int metadataY = artTop + artSize + 13;
-    const int infoWidth = std::max(260, contentWidth - 160);
+    const int infoWidth = compact
+        ? width() - 24 : std::max(260, contentWidth - 160);
     m_infoView->setGeometry(
-        std::max(20, (contentWidth - infoWidth) / 2),
+        std::max(12, (contentWidth - infoWidth) / 2),
         metadataY, infoWidth, 104);
-    m_titleLabel->setGeometry(0, 0, m_infoView->width(), 30);
-    m_artistAlbumLabel->setGeometry(0, 31, m_infoView->width(), 24);
-    m_genreLabel->setGeometry(0, 56, m_infoView->width(), 22);
+    m_titleLabel->setGeometry(
+        0, 0, m_infoView->width(), compact ? 24 : 30);
+    m_artistAlbumLabel->setGeometry(
+        0, compact ? 23 : 31,
+        m_infoView->width(), compact ? 20 : 24);
+    m_genreLabel->setGeometry(
+        0, compact ? 43 : 56,
+        m_infoView->width(), compact ? 18 : 22);
     m_controlsView->setGeometry(0, 0, width(), height());
 
     m_closeButton->setGeometry(12, 10, 24, 24);
+    m_minimizeButton->setGeometry(40, 10, 24, 24);
+    m_compactButton->setGeometry(
+        width() - 36, 10, 24, 24);
     m_backButton->hide();
-    m_volumeButton->setGeometry(12, height() - 50, 26, 26);
-    m_volumeSlider->setGeometry(42, height() - 42, 82, 16);
     const int center = contentWidth / 2;
-    m_shuffleButton->setGeometry(
-        center - 86, height() - 48, 28, 28);
-    m_previousButton->setGeometry(
-        center - 52, height() - 50, 30, 30);
-    m_playButton->setGeometry(
-        center - 14, height() - 56, 40, 40);
-    m_nextButton->setGeometry(
-        center + 34, height() - 50, 30, 30);
-    m_repeatButton->setGeometry(
-        center + 70, height() - 48, 28, 28);
-    m_artworkButton->setGeometry(
-        contentWidth - 74, height() - 48, 28, 28);
-    m_playlistButton->setGeometry(
-        contentWidth - 40, height() - 48, 28, 28);
+    if (compact) {
+        m_volumeButton->setGeometry(10, 256, 24, 24);
+        m_volumeSlider->hide();
+        m_shuffleButton->setGeometry(48, 254, 24, 24);
+        m_previousButton->setGeometry(78, 252, 28, 28);
+        m_playButton->setGeometry(110, 246, 38, 38);
+        m_nextButton->setGeometry(152, 252, 28, 28);
+        m_repeatButton->setGeometry(182, 254, 24, 24);
+        m_artworkButton->setGeometry(218, 254, 24, 24);
+        m_playlistButton->setGeometry(218, 286, 24, 24);
+        m_upNextLabel->setGeometry(20, 294, 190, 22);
+        m_upNextLabel->show();
+    } else {
+        m_volumeButton->setGeometry(12, height() - 50, 26, 26);
+        m_volumeSlider->setGeometry(42, height() - 42, 82, 16);
+        m_volumeSlider->show();
+        m_shuffleButton->setGeometry(
+            center - 86, height() - 48, 28, 28);
+        m_previousButton->setGeometry(
+            center - 52, height() - 50, 30, 30);
+        m_playButton->setGeometry(
+            center - 14, height() - 56, 40, 40);
+        m_nextButton->setGeometry(
+            center + 34, height() - 50, 30, 30);
+        m_repeatButton->setGeometry(
+            center + 70, height() - 48, 28, 28);
+        m_artworkButton->setGeometry(
+            contentWidth - 108, height() - 48, 28, 28);
+        m_playlistButton->setGeometry(
+            contentWidth - 74, height() - 48, 28, 28);
+        m_upNextLabel->hide();
+    }
 
-    const int timelineY = height() - 92;
+    const int timelineY = compact ? 222 : height() - 92;
     m_elapsedLabel->setGeometry(8, timelineY, 38, 16);
     m_timeline->setGeometry(
         48, timelineY, std::max(100, contentWidth - 96), 16);
@@ -664,6 +782,22 @@ void MusicModeView::setControlsVisible(bool visible, bool animated)
     m_controlsView->setEnabled(true);
 }
 
+void MusicModeView::toggleCompactPresentation()
+{
+    if (m_fullScreen) {
+        return;
+    }
+    m_compactPresentation = !m_compactPresentation;
+    m_compactButton->setToolTip(
+        m_compactPresentation
+            ? tr("Exit Compact Music Mode")
+            : tr("Enter Compact Music Mode"));
+    if (m_showPlaylist) {
+        setPlaylistVisible(false);
+    }
+    emit preferredSizeChanged();
+}
+
 void MusicModeView::updateMetadata()
 {
     m_artwork = embeddedMp3Artwork(m_playerCore->info().currentUrl);
@@ -695,6 +829,23 @@ void MusicModeView::updateMetadata()
     m_artistAlbumLabel->setText(detail);
     m_artistAlbumLabel->setToolTip(detail);
     m_genreLabel->setText(genre);
+}
+
+void MusicModeView::updateUpNext()
+{
+    const PlaylistState &playlist = m_playerCore->info().playlist;
+    const int next = playlist.currentIndex + 1;
+    if (next >= 0 && next < playlist.items.size()) {
+        const PlaylistItem &item = playlist.items[next];
+        const QString name = !item.displayName.isEmpty()
+            ? item.displayName
+            : !item.title.isEmpty() ? item.title : item.url.fileName();
+        m_upNextLabel->setText(tr("Up Next  ·  %1").arg(name));
+        m_upNextLabel->setToolTip(name);
+    } else {
+        m_upNextLabel->setText(tr("Up Next"));
+        m_upNextLabel->setToolTip({});
+    }
 }
 
 void MusicModeView::updatePlaybackState()

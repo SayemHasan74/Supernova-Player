@@ -245,6 +245,10 @@ QPainterPath iconPath(IinaIcon icon, const QRectF &bounds)
         path.lineTo(center.x() - 5.5 * unit, center.y() + 3.5 * unit);
         path.lineTo(center.x() - 3.0 * unit, center.y() + 1.2 * unit);
         break;
+    case IinaIcon::Minimize:
+        path.moveTo(center.x() - 5.0 * unit, center.y() + 2.5 * unit);
+        path.lineTo(center.x() + 5.0 * unit, center.y() + 2.5 * unit);
+        break;
     }
     return path;
 }

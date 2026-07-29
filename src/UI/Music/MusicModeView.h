@@ -38,6 +38,7 @@ signals:
     void closeRequested();
     void playlistRequested();
     void fullScreenRequested();
+    void minimizeRequested();
     void preferredSizeChanged();
     void previewRequested(double seconds, const QPoint &globalAnchor);
     void previewDismissed();
@@ -51,7 +52,9 @@ protected:
 
 private:
     void setControlsVisible(bool visible, bool animated = true);
+    void toggleCompactPresentation();
     void updateMetadata();
+    void updateUpNext();
     void updatePlaybackState();
     void updateTimeLabels();
     void updateVolume(double volume, bool muted);
@@ -67,6 +70,8 @@ private:
     QLabel *m_durationLabel = nullptr;
     IinaTimeline *m_timeline = nullptr;
     IinaIconButton *m_closeButton = nullptr;
+    IinaIconButton *m_minimizeButton = nullptr;
+    IinaIconButton *m_compactButton = nullptr;
     IinaIconButton *m_backButton = nullptr;
     IinaIconButton *m_volumeButton = nullptr;
     IinaIconButton *m_previousButton = nullptr;
@@ -77,6 +82,7 @@ private:
     IinaIconButton *m_shuffleButton = nullptr;
     IinaIconButton *m_repeatButton = nullptr;
     QLabel *m_genreLabel = nullptr;
+    QLabel *m_upNextLabel = nullptr;
     QFrame *m_volumePopover = nullptr;
     QSlider *m_volumeSlider = nullptr;
     QGraphicsOpacityEffect *m_infoOpacity = nullptr;
@@ -93,4 +99,6 @@ private:
     bool m_showPlaylist = false;
     bool m_controlsVisible = false;
     bool m_wasPausedBeforeTimelineDrag = false;
+    bool m_compactPresentation = false;
+    bool m_fullScreen = false;
 };
