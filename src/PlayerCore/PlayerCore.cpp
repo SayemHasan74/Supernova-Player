@@ -251,6 +251,15 @@ void PlayerCore::openPrimaryUrl(const QUrl &url)
             QStringLiteral("force-window"), QStringLiteral("yes"));
     }
 
+    // Embedded cover art is exposed by mpv as a video stream. Broken artwork
+    // must not keep an otherwise valid audio file waiting forever for a video
+    // reconfiguration event, so audio containers use the audio-only track
+    // selection and the window provides their compact presentation.
+    m_mpv->setString(
+        QStringLiteral("vid"),
+        MediaSourceResolver::isAudioFile(url)
+            ? QStringLiteral("no") : QStringLiteral("auto"));
+
     m_info.justOpenedFile = true;
     setState(PlayerState::Loading);
     const QString source =

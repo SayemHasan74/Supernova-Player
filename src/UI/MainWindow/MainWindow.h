@@ -172,5 +172,6 @@ private:
     bool m_playlistWasVisibleBeforeCompact = false;
     bool m_mediaSettingsWasVisibleBeforeCompact = false;
     bool m_alwaysOnTop = false;
+    bool m_musicModeAutomatic = false;
     bool m_applicationEventFilterInstalled = false;
 };

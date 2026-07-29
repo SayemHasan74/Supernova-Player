@@ -49,7 +49,6 @@
 #include <QStackedLayout>
 #include <QTimer>
 #include <QWheelEvent>
-#include <QWindow>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -265,6 +264,21 @@ MainWindow::MainWindow(PlayerCore *playerCore, QWidget *parent)
                 showPlaybackView();
                 updateCommandStates();
                 revealPlayerChrome(false);
+                const bool audioOnly =
+                    m_playerCore->info().hasAudio
+                    && !m_playerCore->info().hasVideo;
+                const bool automaticMusicMode = QSettings().value(
+                    QStringLiteral("window/autoMusicMode"), true)
+                                                    .toBool();
+                if (automaticMusicMode && audioOnly
+                    && m_compactMode == CompactMode::Normal) {
+                    m_musicModeAutomatic = true;
+                    enterCompactMode(CompactMode::Music);
+                } else if (!audioOnly && m_musicModeAutomatic
+                           && m_compactMode == CompactMode::Music) {
+                    m_musicModeAutomatic = false;
+                    exitCompactMode();
+                }
             });
     connect(m_playerCore, &PlayerCore::playbackStopped,
             this, &MainWindow::updateCommandStates);
@@ -375,6 +389,7 @@ void MainWindow::togglePlaylist()
 
 void MainWindow::toggleMusicMode()
 {
+    m_musicModeAutomatic = false;
     if (m_compactMode == CompactMode::Music) {
         exitCompactMode();
     } else {
@@ -566,14 +581,6 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         if (mouseEvent->button() == Qt::RightButton) {
             showPlaybackContextMenu(
                 mouseEvent->globalPosition().toPoint());
-            mouseEvent->accept();
-            return true;
-        }
-        if (watched == m_videoSurface
-            && mouseEvent->button() == Qt::LeftButton
-            && m_compactMode == CompactMode::PictureInPicture
-            && windowHandle()) {
-            windowHandle()->startSystemMove();
             mouseEvent->accept();
             return true;
         }
@@ -784,7 +791,52 @@ bool MainWindow::nativeEvent(
         } else if (bottom) {
             *result = HTBOTTOM;
         } else {
-            *result = HTCLIENT;
+            const QPoint local = mapFromGlobal(
+                QPoint(screenX, screenY));
+            QWidget *child = childAt(local);
+            const bool overVisibleChrome =
+                m_playerChrome && !m_playerChrome->isConcealed()
+                && child
+                && (child == m_playerChrome
+                    || m_playerChrome->isAncestorOf(child));
+            *result = overVisibleChrome ? HTCLIENT : HTCAPTION;
+        }
+        return true;
+    }
+    if (nativeMessage
+        && m_compactMode == CompactMode::PictureInPicture
+        && nativeMessage->message == WM_NCMOUSEMOVE) {
+        revealPlayerChrome();
+    }
+    if (nativeMessage
+        && m_compactMode == CompactMode::PictureInPicture
+        && nativeMessage->message == WM_NCRBUTTONUP) {
+        const QPoint global(
+            static_cast<short>(LOWORD(nativeMessage->lParam)),
+            static_cast<short>(HIWORD(nativeMessage->lParam)));
+        QTimer::singleShot(0, this, [this, global] {
+            showPlaybackContextMenu(global);
+        });
+        if (result) {
+            *result = 0;
+        }
+        return true;
+    }
+    if (nativeMessage
+        && m_compactMode == CompactMode::PictureInPicture
+        && nativeMessage->message == WM_NCLBUTTONDBLCLK) {
+        QTimer::singleShot(0, this, &MainWindow::toggleFullScreen);
+        if (result) {
+            *result = 0;
+        }
+        return true;
+    }
+    if (nativeMessage
+        && m_compactMode == CompactMode::PictureInPicture
+        && nativeMessage->message == WM_NCMBUTTONUP) {
+        QTimer::singleShot(0, this, &MainWindow::toggleProgressMode);
+        if (result) {
+            *result = 0;
         }
         return true;
     }

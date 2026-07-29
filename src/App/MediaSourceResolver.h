@@ -19,6 +19,7 @@ public:
     [[nodiscard]] static QList<QUrl> siblingPlaylistFor(
         const QUrl &openedUrl);
     [[nodiscard]] static bool canResolve(const QMimeData *mimeData);
+    [[nodiscard]] static bool isAudioFile(const QUrl &url);
 
     [[nodiscard]] static QString mediaDialogFilter();
     [[nodiscard]] static QStringList supportedMediaExtensions();

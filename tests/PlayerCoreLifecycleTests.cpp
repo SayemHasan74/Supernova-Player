@@ -59,6 +59,7 @@ private slots:
     void nativePlaylistBuildsAuthoritativeQueueState();
     void realPlaylistSupportsPlayRemoveAndClear();
     void singleLocalFileAutoloadsSiblingsAndNextPlaysThem();
+    void audioFixtureIgnoresBrokenAttachedArtwork();
     void screenshotUsesConfiguredDestinationWhenFixtureIsProvided();
 };
 
@@ -389,6 +390,29 @@ void PlayerCoreLifecycleTests::
         core.info().playlist.currentIndex, 1, 5000);
     QTRY_COMPARE_WITH_TIMEOUT(
         core.info().currentUrl.toLocalFile(), track10, 5000);
+}
+
+void PlayerCoreLifecycleTests::
+    audioFixtureIgnoresBrokenAttachedArtwork()
+{
+    const QString path =
+        qEnvironmentVariable("SUPERNOVA_AUDIO_FIXTURE");
+    if (path.isEmpty()) {
+        QSKIP("SUPERNOVA_AUDIO_FIXTURE is not configured");
+    }
+    QVERIFY2(QFileInfo::exists(path), qPrintable(path));
+
+    PlayerCore core;
+    core.m_mpv->setString(
+        QStringLiteral("ao"), QStringLiteral("null"));
+    core.m_mpv->setFlag(QStringLiteral("mute"), true);
+    QSignalSpy loaded(&core, &PlayerCore::mediaLoaded);
+    core.openUrl(QUrl::fromLocalFile(path));
+
+    QTRY_COMPARE_WITH_TIMEOUT(loaded.count(), 1, 10000);
+    QVERIFY(core.info().hasAudio);
+    QVERIFY(!core.info().hasVideo);
+    QVERIFY(isLoaded(core.info().state));
 }
 
 QTEST_GUILESS_MAIN(PlayerCoreLifecycleTests)

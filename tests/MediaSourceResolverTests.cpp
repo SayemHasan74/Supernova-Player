@@ -69,6 +69,14 @@ int main(int argc, char *argv[])
                      "video10 must sort after video2");
     passed &= expect(folder.value(2).toLocalFile() == audio,
                      "nested media must be included recursively");
+    passed &= expect(
+        MediaSourceResolver::isAudioFile(
+            QUrl::fromLocalFile(audio)),
+        "audio containers must be classified before playback");
+    passed &= expect(
+        !MediaSourceResolver::isAudioFile(
+            QUrl::fromLocalFile(video2)),
+        "video containers must not use the audio-only fallback");
 
     std::cerr << "Checking IINA-style sibling autoload\n";
     const QList<QUrl> siblings =

@@ -283,6 +283,13 @@ bool MediaSourceResolver::canResolve(const QMimeData *mimeData)
                || QFileInfo::exists(url.toLocalFile()));
 }
 
+bool MediaSourceResolver::isAudioFile(const QUrl &url)
+{
+    return url.isLocalFile()
+        && kAudioExtensions.contains(
+            QFileInfo(url.toLocalFile()).suffix().toLower());
+}
+
 QString MediaSourceResolver::mediaDialogFilter()
 {
     QStringList patterns;
